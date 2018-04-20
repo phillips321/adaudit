@@ -21,9 +21,9 @@ Write-Both " _____ ____     _____       _ _ _
 $versionnum                  by phillips321
 "
 Write-Both "[*] Script start time $starttime"
-import-module ActiveDirectory
-import-module ServerManager
-import-module GroupPolicy
+if (Get-Module -ListAvailable -Name ActiveDirectory){import-module ActiveDirectory} else {write-host "[!] ActiveDirectory module not installed, exiting..." ; exit}
+if (Get-Module -ListAvailable -Name ServerManager){import-module ServerManager} else {write-host "[!] ServerManager module not installed, exiting..." ; exit}
+if (Get-Module -ListAvailable -Name GroupPolicy){import-module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
 write-host "[+] Outputting to $outputdir"
 
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
