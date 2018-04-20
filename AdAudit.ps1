@@ -1,11 +1,12 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
+    v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
-  DCs not owned by Domain Admins: Get-ADComputer -server adsecure.capita.co.uk -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
+  DCs not owned by Domain Admins: Get-ADComputer -server frunit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v1.0"
+$versionnum = "v1.1"
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
 if (!(Test-Path "$outputdir")) { New-Item -ItemType directory -Path $outputdir | out-null }
@@ -87,17 +88,19 @@ function Get-NTDSdit{#dumps NTDS.dit, SYSTEM and SAM for password cracking
 
 function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Get-GPPPassword.ps1)
     $XMLFiles = Get-ChildItem -Path "\\$Env:USERDNSDOMAIN\SYSVOL" -Recurse -ErrorAction SilentlyContinue -Include 'Groups.xml','Services.xml','Scheduledtasks.xml','DataSources.xml','Printers.xml','Drives.xml'
-    foreach ($File in $XMLFiles) {
-        $Filename = Split-Path $File -Leaf
-        $Distinguishedname = (split-path (split-path (split-path( split-path (split-path $File -Parent) -parent ) -parent ) -parent) -Leaf).Substring(1).TrimEnd('}')
-        [xml]$Xml = Get-Content ($File)
-        $count=0
-        if ($Xml.innerxml -like "*cpassword*"){
-            if (!(Test-Path "$outputdir\sysvol")) { New-Item -ItemType directory -Path "$outputdir\sysvol" | out-null }
-            Write-Both "    [!] cpassword found in file, copying to output folder"
-            Write-Both "        $File"
-            copy-item -Path $File -Destination $outputdir\sysvol\$Distinguishedname.$Filename
-            $count++
+    if ($XMLFiles){
+        foreach ($File in $XMLFiles) {
+            $Filename = Split-Path $File -Leaf
+            $Distinguishedname = (split-path (split-path (split-path( split-path (split-path $File -Parent) -parent ) -parent ) -parent) -Leaf).Substring(1).TrimEnd('}')
+            [xml]$Xml = Get-Content ($File)
+            $count=0
+            if ($Xml.innerxml -like "*cpassword*"){
+                if (!(Test-Path "$outputdir\sysvol")) { New-Item -ItemType directory -Path "$outputdir\sysvol" | out-null }
+                Write-Both "    [!] cpassword found in file, copying to output folder"
+                Write-Both "        $File"
+                copy-item -Path $File -Destination $outputdir\sysvol\$Distinguishedname.$Filename
+                $count++
+            }
         }
     }
     if ($count -eq 0){Write-Both "    ...cpassword not found in the $($XMLFiles.count) XML files found."}
