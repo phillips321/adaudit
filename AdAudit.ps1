@@ -1,12 +1,13 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
+    v1.2 - Added check for modules
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
-  DCs not owned by Domain Admins: Get-ADComputer -server frunit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
+  DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v1.1"
+$versionnum = "v1.2"
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
 if (!(Test-Path "$outputdir")) { New-Item -ItemType directory -Path $outputdir | out-null }
