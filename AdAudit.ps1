@@ -1,13 +1,14 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
+    v1.3 - Added XML output for GPO (for offline processing using grouper https://github.com/l0ss/Grouper/blob/master/grouper.psm1)
     v1.2 - Added check for modules
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v1.2"
+$versionnum = "v1.3"
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
 if (!(Test-Path "$outputdir")) { New-Item -ItemType directory -Path $outputdir | out-null }
@@ -64,10 +65,14 @@ function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
     if ($count -gt 0){Write-Both "    [!] $count accounts with passwords older than 90days, see accounts_with_old_passwords.txt"}
 }
 
-function Get-GPOtoHTML{#oututs complete GPO report
+function Get-GPOtoFile{#oututs complete GPO report
     if (Test-Path "$outputdir\GPOReport.html") { Remove-Item "$outputdir\GPOReport.html" -Recurse; }
     Get-GPOReport -All -ReportType HTML -Path "$outputdir\GPOReport.html"
     Write-Both "    [+] GPO Report saved to GPOReport.html"
+    if (Test-Path "$outputdir\GPOReport.xml") { Remove-Item "$outputdir\GPOReport.xml" -Recurse; }
+    Get-GPOReport -All -ReportType XML -Path "$outputdir\GPOReport.xml"
+    Write-Both "    [+] GPO Report saved to GPOReport.xml, now run Grouper offline using the following command"
+    Write-Both "    [+]     PS>Import-Module Grouper.psm1 ; Invoke-AuditGPOReport -Path C:\GPOReport.xml -Level 3"
 }
 
 function Get-GPOsPerOU{#Lists all OUs and which GPOs apply to them
@@ -153,7 +158,7 @@ Write-Both "[*] Looking for inactive/disabled accounts" ; Get-InactiveAccounts ;
 Write-Both "[*] Looking for server 2003/XP machines connected to domain" ; Get-OldBoxes
 Write-Both "[*] AD Findings" ; Get-MachineAccountQuota ; Get-SMB1Support
 Write-Both "[*] Domain Trust Findings" ; Get-DomainTrusts
-Write-Both "[*] GPO Findings"  ; Get-GPOtoHTML ; Get-GPOsPerOU
+Write-Both "[*] GPO Findings"  ; Get-GPOtoFile ; Get-GPOsPerOU
 Write-Both "[*] Trying to find SysVOL xml files containg cpassword..."; Get-SYSVOLXMLS
 Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
 $endtime = get-date
