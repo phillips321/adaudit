@@ -1,7 +1,9 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
-    v1.7 - Added check for last time 'Administrator' account logged on.
+    v2.0 - Multiple Additions and knocked off lots of the todo list
+    v1.9 - Fixed bug, that used Administrator account name instead of UID 500 and a bug with inactive accounts timespan
+    v1.8 - Added check for last time 'Administrator' account logged on.
     v1.6 - Added Get-FunctionalLevel and krbtgt password last changed check
     v1.5 - Added Get-HostDetails to output simple info like username, hostname, etc...
     v1.4 - Added Get-WinVersion version to assist with some checks (SMBv1 currently)
@@ -11,14 +13,13 @@ Changlog:
     v1.0 - First release
 ToDo:
   Trusts without domain filtering
-  Accounts with sid history matching the domain
   Inactive domain trusts
+  Accounts with sid history matching the domain
   Schema Admins group not empty
-  Last change of kerberos account password
   DCs with null session Enabled
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v1.7"
+$versionnum = "v2.0"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
@@ -36,8 +37,8 @@ function Get-PasswordPolicy{
 }
 function Get-DomainTrusts{#lists domain trusts if they are bad
     ForEach ($trust in (Get-ADObject -Filter {objectClass -eq "trustedDomain"} -Properties TrustPartner,TrustDirection,trustType)){
-        if ($trust.TrustDirection -eq 2){Write-Both "    [!] The domain $($trust.Name) is trusted by us!" }
-        if ($trust.TrustDirection -eq 3){Write-Both "    [!] Bidirectyional trust with domain $($trust.Name)!" }
+        if ($trust.TrustDirection -eq 2){Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain!" }
+        if ($trust.TrustDirection -eq 3){Write-Both "    [!] Bidirectional trust with domain $($trust.Name)!" }
     }
 }
 function Get-WinVersion(){
@@ -107,7 +108,7 @@ function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.co
     }
     if ($count -eq 0){Write-Both "    ...cpassword not found in the $($XMLFiles.count) XML files found."}
 }
-function Get-InactiveAccounts{#lists accounts not used in past 180 days
+function Get-InactiveAccounts{#lists accounts not used in past 180 days plus some checks for admin accounts
     $count = 0
     ForEach ($account in (Search-ADaccount -AccountInactive -Timespan 180 -UsersOnly)){
         if ($account.Enabled){
@@ -117,12 +118,18 @@ function Get-InactiveAccounts{#lists accounts not used in past 180 days
         }
     }
     if ($count -gt 0){Write-Both "    [!] $count inactive user accounts(180days), see accounts_inactive.txt"}
-    $AdministratorLastLogonDate =  (Get-ADUser -Filter {samaccountname -eq "user1"}  -properties lastlogondate).lastlogondate 
-    if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){Write-Both "    [!] Local Administrator account is still used, last used $AdministratorLastLogonDate!"}
+}
+function Get-AdminAccountChecks{# checks if Administrator account has been renamed, replaced and is no longer used.
+    $AdministratorSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-500"
+    $AdministratorSAMAccountName = (Get-ADUser -Filter {SID -eq $AdministratorSID} -properties SamAccountName).SamAccountName
+    if ($AdministratorSAMAccountName -eq "Administrator"){Write-Both "    [!] Local Administrator account (UID500) has not been renamed"}
+    elseif (!(Get-ADUser -Filter {samaccountname -eq "Administrator"})){Write-Both "    [!] Local Admini account renamed to $AdministratorSAMAccountName, but a dummy account not made in it's place!"}
+    $AdministratorLastLogonDate =  (Get-ADUser -Filter {SID -eq $AdministratorSID}  -properties lastlogondate).lastlogondate 
+    if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){Write-Both "    [!] UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate!"}
 }
 function Get-DisabledAccounts{#lists disabled accounts
     $count = 0
-    ForEach ($account in (Search-ADaccount -AccountInactive -Timespan 180 -UsersOnly)){
+    ForEach ($account in (Search-ADaccount -AccountInactive -Timespan "180" -UsersOnly)){
         if (!($account.Enabled)){
             if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
             Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Accont $($account.SamAccountName) is disabled"
@@ -190,8 +197,8 @@ write-host "[+] Outputting to $outputdir"
 Write-Both "[*] Device Information" ; Get-HostDetails
 Write-Both "[*] ActiveDirectory Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel 
 Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts
-Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts
-Write-Both "[*] Password Information Audit" ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently ; Get-AccountPassDontExpire
+Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks
+Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently
 Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
 Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes
 Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS
