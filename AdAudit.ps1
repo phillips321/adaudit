@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
+    v1.7 - Added check for last time 'Administrator' account logged on.
     v1.6 - Added Get-FunctionalLevel and krbtgt password last changed check
     v1.5 - Added Get-HostDetails to output simple info like username, hostname, etc...
     v1.4 - Added Get-WinVersion version to assist with some checks (SMBv1 currently)
@@ -12,13 +13,12 @@ ToDo:
   Trusts without domain filtering
   Accounts with sid history matching the domain
   Inactive domain trusts
-  Native [Administrator] account recently used
   Schema Admins group not empty
   Last change of kerberos account password
   DCs with null session Enabled
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v1.6"
+$versionnum = "v1.7"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
@@ -117,6 +117,8 @@ function Get-InactiveAccounts{#lists accounts not used in past 180 days
         }
     }
     if ($count -gt 0){Write-Both "    [!] $count inactive user accounts(180days), see accounts_inactive.txt"}
+    $AdministratorLastLogonDate =  (Get-ADUser -Filter {samaccountname -eq "user1"}  -properties lastlogondate).lastlogondate 
+    if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){Write-Both "    [!] Local Administrator account is still used, last used $AdministratorLastLogonDate!"}
 }
 function Get-DisabledAccounts{#lists disabled accounts
     $count = 0
@@ -185,15 +187,13 @@ if (Get-Module -ListAvailable -Name ActiveDirectory){import-module ActiveDirecto
 if (Get-Module -ListAvailable -Name ServerManager){import-module ServerManager} else {write-host "[!] ServerManager module not installed, exiting..." ; exit}
 if (Get-Module -ListAvailable -Name GroupPolicy){import-module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
 write-host "[+] Outputting to $outputdir"
-Write-Both "[*] Device Information" ; Get-HostDetails
-Write-Both "[*] Password Policy Findings" ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently
-Write-Both "[*] Looking for accounts that dont expire" ; Get-AccountPassDontExpire
-Write-Both "[*] Looking for inactive/disabled accounts" ; Get-InactiveAccounts ; Get-DisabledAccounts
-Write-Both "[*] Looking for server 2003/XP machines connected to domain" ; Get-OldBoxes
-Write-Both "[*] AD Findings" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel
-Write-Both "[*] Domain Trust Findings" ; Get-DomainTrusts
-Write-Both "[*] GPO Findings"  ; Get-GPOtoFile ; Get-GPOsPerOU
-Write-Both "[*] Trying to find SysVOL xml files containg cpassword..."; Get-SYSVOLXMLS
-Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
+#Write-Both "[*] Device Information" ; Get-HostDetails
+#Write-Both "[*] ActiveDirectory Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel 
+Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts
+#Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts
+#Write-Both "[*] Password Information Audit" ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently ; Get-AccountPassDontExpire
+#Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
+#Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes
+#Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS
 $endtime = get-date
 Write-Both "[*] Script end time $endtime"
