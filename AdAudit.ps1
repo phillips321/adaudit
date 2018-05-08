@@ -1,6 +1,8 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
+    v1.5 - Added Get-HostDetails to output simple info like username, hostname, etc...
+    v1.4 - Added Get-WinVersion version to assist with some checks (SMBv1 currently)
     v1.3 - Added XML output for GPO (for offline processing using grouper https://github.com/l0ss/Grouper/blob/master/grouper.psm1)
     v1.2 - Added check for modules
     v1.1 - Fixed bug where SYSVOL research returns empty
@@ -8,13 +10,14 @@ Changlog:
 ToDo:
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v1.3"
+$versionnum = "v1.5"
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
 if (!(Test-Path "$outputdir")) { New-Item -ItemType directory -Path $outputdir | out-null }
 
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
+
 
 Write-Both " _____ ____     _____       _ _ _
 |  _  |    \   |  _  |_ _ _| |_| |_
@@ -50,8 +53,18 @@ function Get-DomainTrusts{#lists domain trusts if they are bad
     }
 }
 
+function Get-WinVersion(){
+    $WinVersion = [single]([string][environment]::OSVersion.Version.Major + "." + [string][environment]::OSVersion.Version.Minor)
+    return [single]$WinVersion
+}
+
 function Get-SMB1Support{#check if server supports SMBv1
-    if (!(Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).SMB1 -eq 0){Write-Both "    [!] SMBv1 is not disabled"}
+    if ([single](Get-WinVersion) -le [single]6.1){# NT6.1 or less detected so checking reg key
+        if (!(Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).SMB1 -eq 0){Write-Both "    [!] SMBv1 is not disabled"}
+    }
+    elseif ([single](Get-WinVersion) -ge [single]6.2){#NT6.2 or greater detected so using powershell function
+        if ((Get-SmbServerConfiguration).EnableSMB1Protocol){Write-Both "    [!] SMBv1 is enabled!"}
+    }
 }
 
 function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed passwords in more than 90 days
@@ -152,6 +165,16 @@ function Get-OldBoxes{#lists server 2003/XP machines
     }
     if ($count -gt 0){Write-Both "    [!] We found $count machines running server 2003/XP! see machines_old.txt"}
 }
+function Get-HostDetails{#gets basic information about the host
+    Write-Both "    [+] Device Name:  $env:ComputerName"
+    Write-Both "    [+] Domain Name:  $env:UserDomain"
+    Write-Both "    [+] User Name:  $env:UserName"
+    Write-Both "    [+] NT Version:  $(Get-WinVersion)"
+    $IPAddresses = [net.dns]::GetHostAddresses("")|Select -Expa IP*
+    ForEach ($ip in $IPAddresses){Write-Both "    [+] IP Address:  $ip"}  
+}
+
+Write-Both "[*] Device Information" ; Get-HostDetails
 Write-Both "[*] Password Policy Findings" ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently
 Write-Both "[*] Looking for accounts that dont expire" ; Get-AccountPassDontExpire
 Write-Both "[*] Looking for inactive/disabled accounts" ; Get-InactiveAccounts ; Get-DisabledAccounts
