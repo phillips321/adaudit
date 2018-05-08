@@ -187,13 +187,13 @@ if (Get-Module -ListAvailable -Name ActiveDirectory){import-module ActiveDirecto
 if (Get-Module -ListAvailable -Name ServerManager){import-module ServerManager} else {write-host "[!] ServerManager module not installed, exiting..." ; exit}
 if (Get-Module -ListAvailable -Name GroupPolicy){import-module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
 write-host "[+] Outputting to $outputdir"
-#Write-Both "[*] Device Information" ; Get-HostDetails
-#Write-Both "[*] ActiveDirectory Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel 
+Write-Both "[*] Device Information" ; Get-HostDetails
+Write-Both "[*] ActiveDirectory Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel 
 Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts
-#Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts
-#Write-Both "[*] Password Information Audit" ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently ; Get-AccountPassDontExpire
-#Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
-#Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes
-#Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS
+Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts
+Write-Both "[*] Password Information Audit" ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently ; Get-AccountPassDontExpire
+Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
+Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes
+Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS
 $endtime = get-date
 Write-Both "[*] Script end time $endtime"
