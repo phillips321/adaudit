@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
+    v2.1 - Added check for null sessions
     v2.0 - Multiple Additions and knocked off lots of the todo list
     v1.9 - Fixed bug, that used Administrator account name instead of UID 500 and a bug with inactive accounts timespan
     v1.8 - Added check for last time 'Administrator' account logged on.
@@ -19,7 +20,7 @@ ToDo:
   DCs with null session Enabled
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v2.0"
+$versionnum = "v2.1"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
@@ -35,13 +36,18 @@ function Get-PasswordPolicy{
     if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount)" }
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored!" }
 }
+function Get-NULLSessions{
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymous -eq 0) {Write-Both "    [!] RestrictAnonymous is set to 0!" }
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymousSam -eq 0) {Write-Both "    [!] RestrictAnonymousSam is set to 0!" }
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).everyoneincludesanonymous -eq 1) {Write-Both "    [!] EveryoneIncludesAnonymous is set to 1!" }
+}
 function Get-DomainTrusts{#lists domain trusts if they are bad
     ForEach ($trust in (Get-ADObject -Filter {objectClass -eq "trustedDomain"} -Properties TrustPartner,TrustDirection,trustType)){
         if ($trust.TrustDirection -eq 2){Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain!" }
         if ($trust.TrustDirection -eq 3){Write-Both "    [!] Bidirectional trust with domain $($trust.Name)!" }
     }
 }
-function Get-WinVersion(){
+function Get-WinVersion{
     $WinVersion = [single]([string][environment]::OSVersion.Version.Major + "." + [string][environment]::OSVersion.Version.Minor)
     return [single]$WinVersion
 }
@@ -199,7 +205,7 @@ write-host "[+] Outputting to $outputdir"
 Write-Both "[*] Device Information" ; Get-HostDetails
 Write-Both "[*] ActiveDirectory Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel
 Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts
-Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks
+Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions
 Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently
 Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
 Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes
