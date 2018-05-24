@@ -1,7 +1,8 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
-    v2.2 - Minor typo fix 
+    v2.3 - Added more useful user output to .txt files (Cheers DK)
+    v2.2 - Minor typo fix
     v2.1 - Added check for null sessions
     v2.0 - Multiple Additions and knocked off lots of the todo list
     v1.9 - Fixed bug, that used Administrator account name instead of UID 500 and a bug with inactive accounts timespan
@@ -21,7 +22,7 @@ ToDo:
   DCs with null session Enabled
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v2.1"
+$versionnum = "v2.3"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
@@ -65,7 +66,7 @@ function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
     $DaysAgo=(Get-Date).AddDays(-90)
     ForEach ($account in (get-aduser -filter {PwdLastSet -lt $DaysAgo} -properties passwordlastset)){
         if ($account.PasswordLastSet){$datelastchanged = $account.PasswordLastSet} else {$datelastchanged = "Never"}
-        Add-Content -Path "$outputdir\accounts_with_old_passwords.txt" -Value "User $($account.SamAccountName) has not changed thier password since $datelastchanged"
+        Add-Content -Path "$outputdir\accounts_with_old_passwords.txt" -Value "User $($account.SamAccountName) ($($account.Name)) has not changed thier password since $datelastchanged"
         $count++
     }
     if ($count -gt 0){Write-Both "    [!] $count accounts with passwords older than 90days, see accounts_with_old_passwords.txt"}
@@ -120,7 +121,7 @@ function Get-InactiveAccounts{#lists accounts not used in past 180 days plus som
     ForEach ($account in (Search-ADaccount -AccountInactive -Timespan 180 -UsersOnly)){
         if ($account.Enabled){
             if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
-            Add-Content -Path "$outputdir\accounts_inactive.txt" -Value "User $($account.SamAccountName) has not logged on since $userlastused"
+            Add-Content -Path "$outputdir\accounts_inactive.txt" -Value "User $($account.SamAccountName) ($($account.Name)) has not logged on since $userlastused"
             $count++
         }
     }
@@ -130,7 +131,7 @@ function Get-AdminAccountChecks{# checks if Administrator account has been renam
     $AdministratorSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-500"
     $AdministratorSAMAccountName = (Get-ADUser -Filter {SID -eq $AdministratorSID} -properties SamAccountName).SamAccountName
     if ($AdministratorSAMAccountName -eq "Administrator"){Write-Both "    [!] Local Administrator account (UID500) has not been renamed"}
-    elseif (!(Get-ADUser -Filter {samaccountname -eq "Administrator"})){Write-Both "    [!] Local Admini account renamed to $AdministratorSAMAccountName, but a dummy account not made in it's place!"}
+    elseif (!(Get-ADUser -Filter {samaccountname -eq "Administrator"})){Write-Both "    [!] Local Admini account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place!"}
     $AdministratorLastLogonDate =  (Get-ADUser -Filter {SID -eq $AdministratorSID}  -properties lastlogondate).lastlogondate
     if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){Write-Both "    [!] UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate!"}
 }
@@ -139,7 +140,7 @@ function Get-DisabledAccounts{#lists disabled accounts
     ForEach ($account in (Search-ADaccount -AccountInactive -Timespan "180" -UsersOnly)){
         if (!($account.Enabled)){
             if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
-            Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) is disabled"
+            Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is disabled"
             $count++
         }
     }
@@ -148,7 +149,7 @@ function Get-DisabledAccounts{#lists disabled accounts
 function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
     $count = 0
     ForEach ($account in (Search-ADAccount -PasswordNeverExpires -UsersOnly)){
-        Add-Content -Path "$outputdir\accounts_passdontexpire.txt" -Value "$($account.SamAccountName), $($account.UserPrincipalName)"
+        Add-Content -Path "$outputdir\accounts_passdontexpire.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
     if ($count -gt 0){Write-Both "    [!] There are $count accounts that don't expire, see accounts_passdontexpire.txt"}
