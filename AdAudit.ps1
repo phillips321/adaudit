@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changlog:
+    v2.2 - Minor typo fix 
     v2.1 - Added check for null sessions
     v2.0 - Multiple Additions and knocked off lots of the todo list
     v1.9 - Fixed bug, that used Administrator account name instead of UID 500 and a bug with inactive accounts timespan
@@ -138,7 +139,7 @@ function Get-DisabledAccounts{#lists disabled accounts
     ForEach ($account in (Search-ADaccount -AccountInactive -Timespan "180" -UsersOnly)){
         if (!($account.Enabled)){
             if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
-            Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Accont $($account.SamAccountName) is disabled"
+            Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) is disabled"
             $count++
         }
     }
