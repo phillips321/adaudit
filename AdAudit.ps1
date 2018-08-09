@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v2.5 - Bug fixes to version check for 2012R2 or greater specific checks
     v2.4 - Forked project. Added Get-OUPerms. Get-LAPSStatus, Get-AdminSDHolders, Get-ProtectedUsers and Get-AuthenticationPoliciesAndSilos functions. Also added FineGrainedPasswordPolicies to Get-PasswordPolicy and changed order slightly
     v2.3 - Added more useful user output to .txt files (Cheers DK)
     v2.2 - Minor typo fix
@@ -23,7 +24,7 @@ ToDo:
   DCs with null session Enabled
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v2.4"
+$versionnum = "v2.5"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 
@@ -61,25 +62,29 @@ function Get-AdminSDHolders{#lists users with AdminSDHolder set
     if ($count -gt 0){Write-Both "    [!] There are $count groups with AdminSDHolder set, see accounts_groupsadminsdholder.txt"}
 }
 
-function Get-ProtectedUsers{#lists users in "Protected Users" group
-    $count = 0
-    ForEach ($members in (Get-ADGroup "Protected Users" -Properties members).Members){
-        $account = Get-ADObject $members -Properties samaccountname
-        Add-Content -Path "$outputdir\accounts_protectedusers.txt" -Value "$($account.SamAccountName) ($($account.Name))"
-        $count++
-    }
+function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
+    if ([single](Get-WinVersion) -ge [single]6.2){#NT6.2 or greater detected so running this script
+        $count = 0
+        ForEach ($members in (Get-ADGroup "Protected Users" -Properties members).Members){
+            $account = Get-ADObject $members -Properties samaccountname
+            Add-Content -Path "$outputdir\accounts_protectedusers.txt" -Value "$($account.SamAccountName) ($($account.Name))"
+            $count++
+        }
         if ($count -gt 0){Write-Both "    [!] There are $count accounts in the 'Protected Users' group, see accounts_protectedusers.txt"}
+    }       
 }
 
 function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies and silos (2012R2 and above)
-    $count = 0
-    foreach ($policy in Get-ADAuthenticationPolicy -Filter *) {Write-both "    [!] Found $policy Authentication Policy"
-    $count++}
-    if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policies found in the domain"}
-    $count = 0
-    foreach ($policysilo in Get-ADAuthenticationPolicySilo -Filter *) {Write-both "    [!] Found $policysilo Authentication Policy Silo"
-    $count++}
-    if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policy Silos found in the domain"}
+    if ([single](Get-WinVersion) -ge [single]6.2){#NT6.2 or greater detected so running this script
+        $count = 0
+        foreach ($policy in Get-ADAuthenticationPolicy -Filter *) {Write-both "    [!] Found $policy Authentication Policy"
+        $count++}
+        if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policies found in the domain"}
+        $count = 0
+        foreach ($policysilo in Get-ADAuthenticationPolicySilo -Filter *) {Write-both "    [!] Found $policysilo Authentication Policy Silo"
+        $count++}
+        if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policy Silos found in the domain"}
+    }
 }
 	
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
