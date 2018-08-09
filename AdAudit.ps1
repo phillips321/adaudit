@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
-Changlog:
+Changelog:
+    v2.4 - Forked project. Added Get-OUPerms. Get-LAPSStatus, Get-AdminSDHolders, Get-ProtectedUsers and Get-AuthenticationPoliciesAndSilos functions. Also added FineGrainedPasswordPolicies to Get-PasswordPolicy and changed order slightly
     v2.3 - Added more useful user output to .txt files (Cheers DK)
     v2.2 - Minor typo fix
     v2.1 - Added check for null sessions
@@ -22,14 +23,71 @@ ToDo:
   DCs with null session Enabled
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v2.3"
+$versionnum = "v2.4"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
+
+function Get-OUPerms{#Check for non-standard perms for authenticated users, domain users, users and everyone groups
+    $objects = (Get-ADObject -Filter *)
+    foreach ($object in $objects) {
+        $output = (Get-Acl AD:$object).Access | where-object {($_.IdentityReference -eq 'NT Authority\Authenticated Users') -or ($_.IdentityReference -eq 'Everyone') -or ($_.IdentityReference -like '*\Domain Users') -or ($_.IdentityReference -eq 'BUILTIN\Users')} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.AccessControlType -ne 'Deny')}
+		if ($output -ne $null) {Write-Both "    [!] OU: $object.DistinguishedName"; Write-Both "    [!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
+    }
+}
+
+function Get-LAPSStatus{#Check for presence of LAPS in domain
+        try{
+        Get-ADObject "CN=ms-Mcs-AdmPwd,CN=Schema,CN=Configuration,$((Get-ADDomain).DistinguishedName)" -ErrorAction Stop | Out-Null
+        Write-Both "    [!] LAPS Installed in domain"
+	    #TODO: Need to check what computers have LAPS assigned using: Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd
+    }
+    catch{
+        Write-Both "    [!] LAPS Not Installed in domain"
+    }
+}
+
+function Get-AdminSDHolders{#lists users with AdminSDHolder set
+    $count = 0
+    ForEach ($account in (Get-ADUser -LDAPFilter "(admincount=1)")){
+        Add-Content -Path "$outputdir\accounts_userAdminSDHolder.txt" -Value "$($account.SamAccountName) ($($account.Name))"
+        $count++
+    }
+        if ($count -gt 0){Write-Both "    [!] There are $count accounts with AdminSDHolder set, see accounts_useradminsdholder.txt"}
+    $count = 0
+    ForEach ($account in (Get-ADGroup -LDAPFilter "(admincount=1)")){
+        Add-Content -Path "$outputdir\accounts_groupAdminSDHolder.txt" -Value "$($account.SamAccountName) ($($account.Name))"
+        $count++
+    }
+    if ($count -gt 0){Write-Both "    [!] There are $count groups with AdminSDHolder set, see accounts_groupsadminsdholder.txt"}
+}
+
+function Get-ProtectedUsers{#lists users in "Protected Users" group
+    $count = 0
+    ForEach ($members in (Get-ADGroup "Protected Users" -Properties members).Members){
+        $account = Get-ADObject $members -Properties samaccountname
+        Add-Content -Path "$outputdir\accounts_protectedusers.txt" -Value "$($account.SamAccountName) ($($account.Name))"
+        $count++
+    }
+        if ($count -gt 0){Write-Both "    [!] There are $count accounts in the 'Protected Users' group, see accounts_protectedusers.txt"}
+}
+
+function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies and silos (2012R2 and above)
+    $count = 0
+    foreach ($policy in Get-ADAuthenticationPolicy -Filter *) {Write-both "    [!] Found $policy Authentication Policy"
+    $count++}
+    if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policies found in the domain"}
+    $count = 0
+    foreach ($policysilo in Get-ADAuthenticationPolicySilo -Filter *) {Write-both "    [!] Found $policysilo Authentication Policy Silo"
+    $count++}
+    if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policy Silos found in the domain"}
+}
+	
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
     $MachineAccountQuota = (Get-ADDomain | select -exp DistinguishedName | get-adobject -prop 'ms-DS-MachineAccountQuota' | select -exp ms-DS-MachineAccountQuota)
     if ($MachineAccountQuota -gt 0){ Write-Both "    [!] Domain users can add $MachineAccountQuota devices to the domain!" }
 }
 function Get-PasswordPolicy{
+	Write-Both 	"    [+] Checking default password policy"
     if (!(Get-ADDefaultDomainPasswordPolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled" }
     if ((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold)" }
     if ((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength)" }
@@ -37,7 +95,20 @@ function Get-PasswordPolicy{
     if ((Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire" }
     if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount)" }
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored!" }
+	Write-Both 	"    [-] Finished checking default password policy"
+	
+	Write-Both 	"    [+] Checking fine-grained password policies if they exist"
+	#foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) { Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] Applies to: ($($finegrainedpolicy).AppliesTo)"
+	foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) {$finegrainedpolicyappliesto=$finegrainedpolicy.AppliesTo; Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] AppliesTo: $($finegrainedpolicyappliesto)"
+	if (!($finegrainedpolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled" }
+    if (($finegrainedpolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold)" }
+    if (($finegrainedpolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength)" }
+    if (($finegrainedpolicy).ReversibleEncryptionEnabled) {Write-Both "    [!] Reversible encryption is enabled" }
+    if (($finegrainedpolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire" }
+    if (($finegrainedpolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount)" } }
+	Write-Both 	"    [-] Finished checking fine-grained password policy"
 }
+
 function Get-NULLSessions{
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymous -eq 0) {Write-Both "    [!] RestrictAnonymous is set to 0!" }
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymousSam -eq 0) {Write-Both "    [!] RestrictAnonymousSam is set to 0!" }
@@ -207,10 +278,13 @@ write-host "[+] Outputting to $outputdir"
 Write-Both "[*] Device Information" ; Get-HostDetails
 Write-Both "[*] ActiveDirectory Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel
 Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts
-Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions
-Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-PasswordPolicy ; Get-UserPasswordNotChangedRecently
+Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers
+Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy
 Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
 Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes
 Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS
+Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms
+Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus
+Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos
 $endtime = get-date
 Write-Both "[*] Script end time $endtime"
