@@ -63,7 +63,7 @@ function Get-AdminSDHolders{#lists users with AdminSDHolder set
 }
 
 function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
-    if ([single](Get-WinVersion) -ge [single]6.2){#NT6.2 or greater detected so running this script
+    if ([single](Get-WinVersion) -ge [single]6.3){#NT6.3 or greater detected so running this script
         $count = 0
         ForEach ($members in (Get-ADGroup "Protected Users" -Properties members).Members){
             $account = Get-ADObject $members -Properties samaccountname
@@ -75,7 +75,7 @@ function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and 
 }
 
 function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies and silos (2012R2 and above)
-    if ([single](Get-WinVersion) -ge [single]6.2){#NT6.2 or greater detected so running this script
+    if ([single](Get-WinVersion) -ge [single]6.3){#NT6.2 or greater detected so running this script
         $count = 0
         foreach ($policy in Get-ADAuthenticationPolicy -Filter *) {Write-both "    [!] Found $policy Authentication Policy"
         $count++}
