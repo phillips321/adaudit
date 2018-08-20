@@ -17,6 +17,7 @@ Changelog:
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
+  Add ability to select which components to run, e.g. --ntds and --PasswordPolicy
   Trusts without domain filtering
   Inactive domain trusts
   Accounts with sid history matching the domain
@@ -71,7 +72,7 @@ function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and 
             $count++
         }
         if ($count -gt 0){Write-Both "    [!] There are $count accounts in the 'Protected Users' group, see accounts_protectedusers.txt"}
-    }       
+    }
 }
 
 function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies and silos (2012R2 and above)
@@ -86,7 +87,7 @@ function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies 
         if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policy Silos found in the domain"}
     }
 }
-	
+
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
     $MachineAccountQuota = (Get-ADDomain | select -exp DistinguishedName | get-adobject -prop 'ms-DS-MachineAccountQuota' | select -exp ms-DS-MachineAccountQuota)
     if ($MachineAccountQuota -gt 0){ Write-Both "    [!] Domain users can add $MachineAccountQuota devices to the domain!" }
@@ -101,7 +102,7 @@ function Get-PasswordPolicy{
     if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount)" }
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored!" }
 	Write-Both 	"    [-] Finished checking default password policy"
-	
+
 	Write-Both 	"    [+] Checking fine-grained password policies if they exist"
 	#foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) { Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] Applies to: ($($finegrainedpolicy).AppliesTo)"
 	foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) {$finegrainedpolicyappliesto=$finegrainedpolicy.AppliesTo; Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] AppliesTo: $($finegrainedpolicyappliesto)"
