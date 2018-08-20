@@ -1,6 +1,8 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v3.0 - Added ability to choose functions before runtime
+        - cleaned up get-ouperms output
     v2.5 - Bug fixes to version check for 2012R2 or greater specific checks
     v2.4 - Forked project. Added Get-OUPerms. Get-LAPSStatus, Get-AdminSDHolders, Get-ProtectedUsers and Get-AuthenticationPoliciesAndSilos functions. Also added FineGrainedPasswordPolicies to Get-PasswordPolicy and changed order slightly
     v2.3 - Added more useful user output to .txt files (Cheers DK)
@@ -17,7 +19,6 @@ Changelog:
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
-  Add ability to select which components to run, e.g. --ntds and --PasswordPolicy
   Trusts without domain filtering
   Inactive domain trusts
   Accounts with sid history matching the domain
@@ -25,16 +26,33 @@ ToDo:
   DCs with null session Enabled
   DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
-$versionnum = "v2.5"
+[cmdletbinding()]
+param (
+  [switch]$hostdetails = $false,
+  [switch]$domainaudit = $false,
+  [switch]$trusts = $false,
+  [switch]$accounts = $false,
+  [switch]$passwordpolicy = $false,
+  [switch]$ntds = $false,
+  [switch]$oldboxes = $false,
+  [switch]$gpo = $false,
+  [switch]$ouperms = $false,
+  [switch]$laps = $false,
+  [switch]$authpolsilos = $false,
+  [switch]$all = $false
+)
+$versionnum = "v3.0"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 
 function Get-OUPerms{#Check for non-standard perms for authenticated users, domain users, users and everyone groups
+    $count = 0
     $objects = (Get-ADObject -Filter *)
     foreach ($object in $objects) {
         $output = (Get-Acl AD:$object).Access | where-object {($_.IdentityReference -eq 'NT Authority\Authenticated Users') -or ($_.IdentityReference -eq 'Everyone') -or ($_.IdentityReference -like '*\Domain Users') -or ($_.IdentityReference -eq 'BUILTIN\Users')} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.AccessControlType -ne 'Deny')}
-		if ($output -ne $null) {Write-Both "    [!] OU: $object.DistinguishedName"; Write-Both "    [!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
+		if ($output -ne $null) { $count++ ; Add-Content -Path "$outputdir\ou_permissions.txt" -Value  "OU: $object.DistinguishedName"; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "[!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
     }
+    if ($count -gt 0){Write-Both "    [!] Issue identified, see $outputdir\ou_permissions.txt"}
 }
 
 function Get-LAPSStatus{#Check for presence of LAPS in domain
@@ -267,8 +285,10 @@ function Get-FunctionalLevel{# Gets the functional level for domain and forest
     if ($ForestLevel -eq "Windows2012R2Forest" -and [single](Get-WinVersion) -gt 6.3){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
     if ($ForestLevel -eq "Windows2016Forest" -and [single](Get-WinVersion) -gt 10.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
 }
+
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
+$scriptname = $MyInvocation.MyCommand.Name
 if (!(Test-Path "$outputdir")) { New-Item -ItemType directory -Path $outputdir | out-null }
 Write-Both " _____ ____     _____       _ _ _
 |  _  |    \   |  _  |_ _ _| |_| |_
@@ -276,21 +296,37 @@ Write-Both " _____ ____     _____       _ _ _
 |__|__|____/   |__|__|___|___|_|_|
 $versionnum                  by phillips321
 "
+$running=$false
 Write-Both "[*] Script start time $starttime"
 if (Get-Module -ListAvailable -Name ActiveDirectory){import-module ActiveDirectory} else {write-host "[!] ActiveDirectory module not installed, exiting..." ; exit}
 if (Get-Module -ListAvailable -Name ServerManager){import-module ServerManager} else {write-host "[!] ServerManager module not installed, exiting..." ; exit}
 if (Get-Module -ListAvailable -Name GroupPolicy){import-module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
 write-host "[+] Outputting to $outputdir"
-Write-Both "[*] Device Information" ; Get-HostDetails
-Write-Both "[*] ActiveDirectory Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel
-Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts
-Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers
-Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy
-Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit
-Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes
-Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS
-Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms
-Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus
-Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos
+if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel }
+if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
+if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers }
+if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
+if ($ntds -Or $all) { $running=$true; Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit }
+if ($oldboxes -Or $all) { $running=$true; Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes }
+if ($gpo -Or $all) { $running=$true; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS }
+if ($ouperms -Or $all) { $running=$true; Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms }
+if ($laps -Or $all) { $running=$true; Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus }
+if ($authpolsilos -Or $all) { $running=$true; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
+if (!$running) { Write-Both "[!] No arguments selected;" 
+    Write-Both "[!] Other options are as follows, they can be used in combination"
+    Write-Both "    -hostdetails retrieves hostname and other useful audit info"
+    Write-Both "    -domainaudit retrieves information about the AD such as functional level"
+    Write-Both "    -trusts retrieves information about any doman trusts"
+    Write-Both "    -accounts identifies account issues such as expired, disabled, etc..."
+    Write-Both "    -passwordpolicy retrieves password policy information "
+    Write-Both "    -ntds dumps the NTDS.dit file using ntdsutil"
+    Write-Both "    -oldboxes identified outdated OSs like XP/2003 joined to the domain"
+    Write-Both "    -gpo dumps the GPOs in XML and HTML for later analysis"
+    Write-Both "    -ouperms checks generic OU permission issues"
+    Write-Both "    -laps checks if LAPS is installed"
+    Write-Both "    -authpolsilos checks for existenece of authentication policies and silos"
+    Write-Both "    -all runs all checks, e.g. $scriptname -all"
+}
 $endtime = get-date
 Write-Both "[*] Script end time $endtime"
