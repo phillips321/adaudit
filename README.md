@@ -1,11 +1,12 @@
 # adaudit
 PowerShell Script to perform a quick AD audit
-
+```
 _____ ____     _____       _ _ _
 |  _  |    \   |  _  |_ _ _| |_| |_
 |     |  |  |  |     | | | . | |  _|
 |__|__|____/   |__|__|___|___|_|_|
                  by phillips321
+```
 
 If you have any decent powershell one liners that could be used in the script please let me know. I'm trying to keep this script as a single file with no requirements on external tools (other than ntdsutil and cmd.exe)
 
@@ -44,7 +45,7 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
 * Check For Existence of LAPS in domain
   * Get-LAPSStatus
 * Check For Existence of Authentication Polices and Silos
-  * Get-AuthenticationPoliciesAndSilos 
+  * Get-AuthenticationPoliciesAndSilos
 
 ## Runtime Args
 The following switches can be used in combination
