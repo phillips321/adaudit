@@ -1,7 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
-    v3.2 - Added seach for DCs not owned by Domain Admins group
+    v3.2 - Added search for DCs not owned by Domain Admins group
     v3.1 - Added progress to functions that have count
         - added check for transitive trusts
     v3.0 - Added ability to choose functions before runtime
@@ -22,8 +22,8 @@ Changelog:
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
-  Need to check what computers have LAPS assigned using: see adsecurity.org/?p=3164 objects ms-Mcs-AdmPwd or AdmPwdExpirationTime 
-    Get-ADComputer -Filter {ms-mcs-admpwd -like '<not set>'} -Properties * 
+  Need to check what computers have LAPS assigned using: see adsecurity.org/?p=3164 objects ms-Mcs-AdmPwd or AdmPwdExpirationTime
+    Get-ADComputer -Filter {ms-mcs-admpwd -like '<not set>'} -Properties *
   Inactive domain trusts
   Accounts with sid history matching the domain
   Schema Admins group not empty
@@ -374,7 +374,7 @@ if ($gpo -Or $all) { $running=$true; Write-Both "[*] GPO audit (and checking SYS
 if ($ouperms -Or $all) { $running=$true; Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms }
 if ($laps -Or $all) { $running=$true; Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus }
 if ($authpolsilos -Or $all) { $running=$true; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
-if (!$running) { Write-Both "[!] No arguments selected;" 
+if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "[!] Other options are as follows, they can be used in combination"
     Write-Both "    -hostdetails retrieves hostname and other useful audit info"
     Write-Both "    -domainaudit retrieves information about the AD such as functional level"
