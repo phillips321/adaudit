@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v3.2 - Added seach for DCs not owned by Domain Admins group
     v3.1 - Added progress to functions that have count
         - added check for transitive trusts
     v3.0 - Added ability to choose functions before runtime
@@ -21,11 +22,11 @@ Changelog:
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
+  Need to check what computers have LAPS assigned using: Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd
   Inactive domain trusts
   Accounts with sid history matching the domain
   Schema Admins group not empty
   DCs with null session Enabled
-  DCs not owned by Domain Admins: Get-ADComputer -server fruit.com -LDAPFilter "(&(objectCategory=computer)(|(primarygroupid=521)(primarygroupid=516)))" -properties name, ntsecuritydescriptor | select name,{$_.ntsecuritydescriptor.Owner}
 #>
 [cmdletbinding()]
 param (
@@ -42,7 +43,7 @@ param (
   [switch]$authpolsilos = $false,
   [switch]$all = $false
 )
-$versionnum = "v3.1"
+$versionnum = "v3.2"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 
@@ -107,7 +108,6 @@ function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and 
         if ($count -gt 0){Write-Both "    [!] There are $count accounts in the 'Protected Users' group, see accounts_protectedusers.txt"}
     }
 }
-
 function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies and silos (2012R2 and above)
     if ([single](Get-WinVersion) -ge [single]6.3){#NT6.2 or greater detected so running this script
         $count = 0
@@ -302,6 +302,21 @@ function Get-OldBoxes{#lists server 2003/XP machines
     }
     if ($count -gt 0){Write-Both "    [!] We found $count machines running server 2003/XP! see machines_old.txt"}
 }
+function Get-DCsNotOwnedByDA {#searches for DC objects not owned by the Domain Admins group
+    $count = 0
+    $progresscount = 0
+    $domaincontrollers = Get-ADComputer -Filter {PrimaryGroupID -eq 516 -or PrimaryGroupID -eq 521} -Property *
+    $totalcount = $domaincontrollers.count
+    ForEach ($machine in $domaincontrollers){
+        $progresscount++
+        Write-Progress -Activity "Searching for DCs not owned by Domain Admins group..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
+        if ($machine.ntsecuritydescriptor.Owner -ne "$env:UserDomain\Domain Admins"){
+            Add-Content -Path "$outputdir\dcs_not_owned_by_da.txt" -Value "$($machine.Name), $($machine.OperatingSystem), $($machine.OperatingSystemServicePack), $($machine.OperatingSystemVersio), $($machine.IPv4Address), owned by $($machine.ntsecuritydescriptor.Owner)"
+            $count++
+        }
+    }
+    if ($count -gt 0){Write-Both "    [!] We found $count DCs not owned by Domains Admins group! see dcs_not_owned_by_da.tx"}
+}
 function Get-HostDetails{#gets basic information about the host
     Write-Both "    [+] Device Name:  $env:ComputerName"
     Write-Both "    [+] Domain Name:  $env:UserDomain"
@@ -348,7 +363,7 @@ if (Get-Module -ListAvailable -Name ServerManager){import-module ServerManager} 
 if (Get-Module -ListAvailable -Name GroupPolicy){import-module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
 write-host "[+] Outputting to $outputdir"
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
