@@ -1,6 +1,8 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v3.1 - Added progress to functions that have count
+        - added check for transitive trusts
     v3.0 - Added ability to choose functions before runtime
         - cleaned up get-ouperms output
     v2.5 - Bug fixes to version check for 2012R2 or greater specific checks
@@ -19,7 +21,6 @@ Changelog:
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
-  Trusts without domain filtering
   Inactive domain trusts
   Accounts with sid history matching the domain
   Schema Admins group not empty
@@ -41,16 +42,20 @@ param (
   [switch]$authpolsilos = $false,
   [switch]$all = $false
 )
-$versionnum = "v3.0"
+$versionnum = "v3.1"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 
 function Get-OUPerms{#Check for non-standard perms for authenticated users, domain users, users and everyone groups
     $count = 0
+    $progresscount = 0
     $objects = (Get-ADObject -Filter *)
+    $totalcount = $objects.count
     foreach ($object in $objects) {
+        $progresscount++
+        Write-Progress -Activity "Searching for non standard permissions for authenticated users..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
         $output = (Get-Acl AD:$object).Access | where-object {($_.IdentityReference -eq 'NT Authority\Authenticated Users') -or ($_.IdentityReference -eq 'Everyone') -or ($_.IdentityReference -like '*\Domain Users') -or ($_.IdentityReference -eq 'BUILTIN\Users')} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.AccessControlType -ne 'Deny')}
-		if ($output -ne $null) { $count++ ; Add-Content -Path "$outputdir\ou_permissions.txt" -Value  "OU: $object.DistinguishedName"; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "[!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
+		if ($output -ne $null) {$count++ ; Add-Content -Path "$outputdir\ou_permissions.txt" -Value  "OU: $object.DistinguishedName"; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "[!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
     }
     if ($count -gt 0){Write-Both "    [!] Issue identified, see $outputdir\ou_permissions.txt"}
 }
@@ -66,15 +71,22 @@ function Get-LAPSStatus{#Check for presence of LAPS in domain
     }
 }
 
-function Get-AdminSDHolders{#lists users with AdminSDHolder set
+function Get-AdminSDHolders{#lists users and groups with AdminSDHolder set
     $count = 0
-    ForEach ($account in (Get-ADUser -LDAPFilter "(admincount=1)")){
+    $usersdaccounts = Get-ADUser -LDAPFilter "(admincount=1)"
+    $totalcount = $usersdaccounts.count
+    ForEach ($account in $usersdaccounts){
+        Write-Progress -Activity "Searching for users who are SD holders..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         Add-Content -Path "$outputdir\accounts_userAdminSDHolder.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
-        if ($count -gt 0){Write-Both "    [!] There are $count accounts with AdminSDHolder set, see accounts_useradminsdholder.txt"}
+    if ($count -gt 0){Write-Both "    [!] There are $count accounts with AdminSDHolder set, see accounts_useradminsdholder.txt"}
+
     $count = 0
-    ForEach ($account in (Get-ADGroup -LDAPFilter "(admincount=1)")){
+    $groupsdaccounts = Get-ADGroup -LDAPFilter "(admincount=1)"
+    $totalcount = $groupsdaccounts.count
+    ForEach ($account in $groupsdaccounts){
+        Write-Progress -Activity "Searching for groups who are SD holders..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         Add-Content -Path "$outputdir\accounts_groupAdminSDHolder.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
@@ -84,7 +96,10 @@ function Get-AdminSDHolders{#lists users with AdminSDHolder set
 function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
     if ([single](Get-WinVersion) -ge [single]6.3){#NT6.3 or greater detected so running this script
         $count = 0
-        ForEach ($members in (Get-ADGroup "Protected Users" -Properties members).Members){
+        $protectedaccounts = (Get-ADGroup "Protected Users" -Properties members).Members
+        $totalcount = $protectedaccounts.count
+        ForEach ($members in $protectedaccounts){
+            Write-Progress -Activity "Searching for ptoected users..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
             $account = Get-ADObject $members -Properties samaccountname
             Add-Content -Path "$outputdir\accounts_protectedusers.txt" -Value "$($account.SamAccountName) ($($account.Name))"
             $count++
@@ -96,12 +111,10 @@ function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and 
 function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies and silos (2012R2 and above)
     if ([single](Get-WinVersion) -ge [single]6.3){#NT6.2 or greater detected so running this script
         $count = 0
-        foreach ($policy in Get-ADAuthenticationPolicy -Filter *) {Write-both "    [!] Found $policy Authentication Policy"
-        $count++}
+        foreach ($policy in Get-ADAuthenticationPolicy -Filter *) {Write-both "    [!] Found $policy Authentication Policy" ; $count++}
         if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policies found in the domain"}
         $count = 0
-        foreach ($policysilo in Get-ADAuthenticationPolicySilo -Filter *) {Write-both "    [!] Found $policysilo Authentication Policy Silo"
-        $count++}
+        foreach ($policysilo in Get-ADAuthenticationPolicySilo -Filter *) {Write-both "    [!] Found $policysilo Authentication Policy Silo" ; $count++}
         if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policy Silos found in the domain"}
     }
 }
@@ -139,9 +152,17 @@ function Get-NULLSessions{
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).everyoneincludesanonymous -eq 1) {Write-Both "    [!] EveryoneIncludesAnonymous is set to 1!" }
 }
 function Get-DomainTrusts{#lists domain trusts if they are bad
-    ForEach ($trust in (Get-ADObject -Filter {objectClass -eq "trustedDomain"} -Properties TrustPartner,TrustDirection,trustType)){
-        if ($trust.TrustDirection -eq 2){Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain!" }
-        if ($trust.TrustDirection -eq 3){Write-Both "    [!] Bidirectional trust with domain $($trust.Name)!" }
+    ForEach ($trust in (Get-ADObject -Filter {objectClass -eq "trustedDomain"} -Properties TrustPartner,TrustDirection,trustType,trustAttributes)){
+        if ($trust.TrustDirection -eq 2){
+            if ($trust.TrustAttributes -ne 1){ # 1 means trust is non-transitive so we chack for anything but that
+                Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain and it is Transitive!"}
+            else {Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain!"}
+        }
+        if ($trust.TrustDirection -eq 3){
+            if ($trust.TrustAttributes -ne 1){ # 1 means trust is non-transitive so we chack for anything but that
+                Write-Both "    [!] Bidirectional trust with domain $($trust.Name) and it is Transitive!" }
+            else {Write-Both "    [!] Bidirectional trust with domain $($trust.Name)!"}
+        }
     }
 }
 function Get-WinVersion{
@@ -159,7 +180,10 @@ function Get-SMB1Support{#check if server supports SMBv1
 function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed passwords in more than 90 days
     $count = 0
     $DaysAgo=(Get-Date).AddDays(-90)
-    ForEach ($account in (get-aduser -filter {PwdLastSet -lt $DaysAgo} -properties passwordlastset)){
+    $accountsoldpasswords = get-aduser -filter {PwdLastSet -lt $DaysAgo} -properties passwordlastset
+    $totalcount= $accountsoldpasswords.count
+    ForEach ($account in $accountsoldpasswords){
+        Write-Progress -Activity "Searching for passwords older than 90days..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         if ($account.PasswordLastSet){$datelastchanged = $account.PasswordLastSet} else {$datelastchanged = "Never"}
         Add-Content -Path "$outputdir\accounts_with_old_passwords.txt" -Value "User $($account.SamAccountName) ($($account.Name)) has not changed thier password since $datelastchanged"
         $count++
@@ -178,9 +202,14 @@ function Get-GPOtoFile{#oututs complete GPO report
     Write-Both "    [+]     PS>Import-Module Grouper.psm1 ; Invoke-AuditGPOReport -Path C:\GPOReport.xml -Level 3"
 }
 function Get-GPOsPerOU{#Lists all OUs and which GPOs apply to them
-    foreach ($ouobject in Get-ADOrganizationalUnit -Filter *){
+    $count = 0
+    $ousgpos = Get-ADOrganizationalUnit -Filter *
+    $totalcount = $ousgpos.count
+    foreach ($ouobject in $ousgpos){
+        Write-Progress -Activity "Identifying which GPOs apply to which OUs..." -Status "Currently identifed $count OUs" -PercentComplete ($count / $totalcount*100)
         $combinedgpos = ($(((Get-GPInheritance -Target $ouobject).InheritedGpoLinks) | select DisplayName) | ForEach-Object { $_.DisplayName }) -join ','
         Add-Content -Path "$outputdir\ous_inheritedGPOs.txt" -Value "$($ouobject.Name) Inherits these GPOs: $combinedgpos"
+        $count++
    }
    Write-Both "    [+] Inhertied GPOs saved to ous_inheritedGPOs.txt"
 }
@@ -195,11 +224,15 @@ function Get-NTDSdit{#dumps NTDS.dit, SYSTEM and SAM for password cracking
 function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Get-GPPPassword.ps1)
     $XMLFiles = Get-ChildItem -Path "\\$Env:USERDNSDOMAIN\SYSVOL" -Recurse -ErrorAction SilentlyContinue -Include 'Groups.xml','Services.xml','Scheduledtasks.xml','DataSources.xml','Printers.xml','Drives.xml'
     if ($XMLFiles){
+        $count = 0
+        $progresscount = 0
+        $totalcount = $XMLFiles.count
         foreach ($File in $XMLFiles) {
+            $progresscount++
+            Write-Progress -Activity "Searching SYSVOL *.xmls for cpassword..." -Status "Currently searched through $count" -PercentComplete ($progresscount / $totalcount*100)
             $Filename = Split-Path $File -Leaf
             $Distinguishedname = (split-path (split-path (split-path( split-path (split-path $File -Parent) -parent ) -parent ) -parent) -Leaf).Substring(1).TrimEnd('}')
             [xml]$Xml = Get-Content ($File)
-            $count=0
             if ($Xml.innerxml -like "*cpassword*"){
                 if (!(Test-Path "$outputdir\sysvol")) { New-Item -ItemType directory -Path "$outputdir\sysvol" | out-null }
                 Write-Both "    [!] cpassword found in file, copying to output folder"
@@ -213,7 +246,12 @@ function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.co
 }
 function Get-InactiveAccounts{#lists accounts not used in past 180 days plus some checks for admin accounts
     $count = 0
-    ForEach ($account in (Search-ADaccount -AccountInactive -Timespan 180 -UsersOnly)){
+    $progresscount = 0
+    $inactiveaccounts = Search-ADaccount -AccountInactive -Timespan 180 -UsersOnly
+    $totalcount = $inactiveaccounts.count
+    ForEach ($account in $inactiveaccounts){
+        $progresscount++
+        Write-Progress -Activity "Searching for inactive users..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
         if ($account.Enabled){
             if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
             Add-Content -Path "$outputdir\accounts_inactive.txt" -Value "User $($account.SamAccountName) ($($account.Name)) has not logged on since $userlastused"
@@ -231,19 +269,23 @@ function Get-AdminAccountChecks{# checks if Administrator account has been renam
     if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){Write-Both "    [!] UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate!"}
 }
 function Get-DisabledAccounts{#lists disabled accounts
+    $disabledaccounts = Search-ADaccount -AccountDisabled -UsersOnly
     $count = 0
-    ForEach ($account in (Search-ADaccount -AccountInactive -Timespan "180" -UsersOnly)){
-        if (!($account.Enabled)){
-            if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
-            Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is disabled"
-            $count++
-        }
+    $totalcount = $disabledaccounts.count
+    ForEach ($account in $disabledaccounts){
+        Write-Progress -Activity "Searching for disabled users..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
+        if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
+        Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is disabled"
+        $count++
     }
     if ($count -gt 0){Write-Both "    [!] $count disabled user accounts, see accounts_disabled.txt"}
 }
 function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
     $count = 0
-    ForEach ($account in (Search-ADAccount -PasswordNeverExpires -UsersOnly)){
+    $nonexpiringpasswords = Search-ADAccount -PasswordNeverExpires -UsersOnly
+    $totalcount = $nonexpiringpasswords.count
+    ForEach ($account in $nonexpiringpasswords){
+        Write-Progress -Activity "Searching for users with passwords that dont expire..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         Add-Content -Path "$outputdir\accounts_passdontexpire.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
@@ -251,7 +293,10 @@ function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
 }
 function Get-OldBoxes{#lists server 2003/XP machines
     $count = 0
-    ForEach ($machine in (Get-ADComputer -Filter {OperatingSystem -Like "*2003*" -or OperatingSystem -Like "*XP*"} -Property *)){
+    $oldboxes = Get-ADComputer -Filter {OperatingSystem -Like "*2003*" -or OperatingSystem -Like "*XP*"} -Property *
+    $totalcount = $oldboxes.count
+    ForEach ($machine in $oldboxes){
+        Write-Progress -Activity "Searching for 2003/XP devices joined to the domain..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         Add-Content -Path "$outputdir\machines_old.txt" -Value "$($machine.Name), $($machine.OperatingSystem), $($machine.OperatingSystemServicePack), $($machine.OperatingSystemVersio), $($machine.IPv4Address)"
         $count++
     }
