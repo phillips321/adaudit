@@ -22,7 +22,8 @@ Changelog:
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
-  Need to check what computers have LAPS assigned using: Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd
+  Need to check what computers have LAPS assigned using: see adsecurity.org/?p=3164 objects ms-Mcs-AdmPwd or AdmPwdExpirationTime 
+    Get-ADComputer -Filter {ms-mcs-admpwd -like '<not set>'} -Properties * 
   Inactive domain trusts
   Accounts with sid history matching the domain
   Schema Admins group not empty
