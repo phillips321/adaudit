@@ -13,7 +13,8 @@ If you have any decent powershell one liners that could be used in the script pl
 Run directly on a DC using a DA. If you don't trust the code I suggest reading it first and you'll see it's all harmless! (But shouldn't you be doing that anyway with code you download off the net and then run as DA??)
 
 ## What this does
-* Device Information - Get-HostDetails
+* Device Information
+  * Get-HostDetails
 * Domain Audit
   * Get-MachineAccountQuota
   * Get-SMB1Support
