@@ -2,10 +2,8 @@
 phillips321.co.uk ADAudit.ps1
 Changelog:
     v3.2 - Added search for DCs not owned by Domain Admins group
-    v3.1 - Added progress to functions that have count
-        - added check for transitive trusts
-    v3.0 - Added ability to choose functions before runtime
-        - cleaned up get-ouperms output
+    v3.1 - Added progress to functions that have count, added check for transitive trusts
+    v3.0 - Added ability to choose functions before runtime, cleaned up get-ouperms output
     v2.5 - Bug fixes to version check for 2012R2 or greater specific checks
     v2.4 - Forked project. Added Get-OUPerms. Get-LAPSStatus, Get-AdminSDHolders, Get-ProtectedUsers and Get-AuthenticationPoliciesAndSilos functions. Also added FineGrainedPasswordPolicies to Get-PasswordPolicy and changed order slightly
     v2.3 - Added more useful user output to .txt files (Cheers DK)
