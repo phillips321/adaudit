@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v3.3 - Added a greater level of accuracy to Inactive Accounts (thanks exceedio)
     v3.2 - Added search for DCs not owned by Domain Admins group
     v3.1 - Added progress to functions that have count, added check for transitive trusts
     v3.0 - Added ability to choose functions before runtime, cleaned up get-ouperms output
@@ -246,7 +247,7 @@ function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.co
 function Get-InactiveAccounts{#lists accounts not used in past 180 days plus some checks for admin accounts
     $count = 0
     $progresscount = 0
-    $inactiveaccounts = Search-ADaccount -AccountInactive -Timespan 180 -UsersOnly
+    $inactiveaccounts = Search-ADaccount -AccountInactive -Timespan (New-TimeSpan -Days 180) -UsersOnly
     $totalcount = $inactiveaccounts.count
     ForEach ($account in $inactiveaccounts){
         $progresscount++
