@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v3.4 - Added KB references for internal use
     v3.3 - Added a greater level of accuracy to Inactive Accounts (thanks exceedio)
     v3.2 - Added search for DCs not owned by Domain Admins group
     v3.1 - Added progress to functions that have count, added check for transitive trusts
@@ -43,7 +44,7 @@ param (
   [switch]$authpolsilos = $false,
   [switch]$all = $false
 )
-$versionnum = "v3.2"
+$versionnum = "v3.4"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 
@@ -68,7 +69,7 @@ function Get-LAPSStatus{#Check for presence of LAPS in domain
 	    #TODO: Need to check what computers have LAPS assigned using: Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd
     }
     catch{
-        Write-Both "    [!] LAPS Not Installed in domain"
+        Write-Both "    [!] LAPS Not Installed in domain (KB258)"
     }
 }
 
@@ -81,7 +82,7 @@ function Get-AdminSDHolders{#lists users and groups with AdminSDHolder set
         Add-Content -Path "$outputdir\accounts_userAdminSDHolder.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] There are $count accounts with AdminSDHolder set, see accounts_useradminsdholder.txt"}
+    if ($count -gt 0){Write-Both "    [!] There are $count accounts with AdminSDHolder set, see accounts_useradminsdholder.txt (KB426)"}
 
     $count = 0
     $groupsdaccounts = Get-ADGroup -LDAPFilter "(admincount=1)"
@@ -91,7 +92,7 @@ function Get-AdminSDHolders{#lists users and groups with AdminSDHolder set
         Add-Content -Path "$outputdir\accounts_groupAdminSDHolder.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] There are $count groups with AdminSDHolder set, see accounts_groupsadminsdholder.txt"}
+    if ($count -gt 0){Write-Both "    [!] There are $count groups with AdminSDHolder set, see accounts_groupsadminsdholder.txt (KB426)"}
 }
 
 function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
@@ -121,47 +122,47 @@ function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies 
 
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
     $MachineAccountQuota = (Get-ADDomain | select -exp DistinguishedName | get-adobject -prop 'ms-DS-MachineAccountQuota' | select -exp ms-DS-MachineAccountQuota)
-    if ($MachineAccountQuota -gt 0){ Write-Both "    [!] Domain users can add $MachineAccountQuota devices to the domain!" }
+    if ($MachineAccountQuota -gt 0){ Write-Both "    [!] Domain users can add $MachineAccountQuota devices to the domain! (KB251)" }
 }
 function Get-PasswordPolicy{
 	Write-Both 	"    [+] Checking default password policy"
-    if (!(Get-ADDefaultDomainPasswordPolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled" }
-    if ((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold)" }
-    if ((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength)" }
+    if (!(Get-ADDefaultDomainPasswordPolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled (KB262)" }
+    if ((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold) (KB263)" }
+    if ((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength) (KB262)" }
     if ((Get-ADDefaultDomainPasswordPolicy).ReversibleEncryptionEnabled) {Write-Both "    [!] Reversible encryption is enabled" }
-    if ((Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire" }
-    if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount)" }
+    if ((Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire (KB254)" }
+    if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount) (KB262)" }
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored!" }
 	Write-Both 	"    [-] Finished checking default password policy"
 
 	Write-Both 	"    [+] Checking fine-grained password policies if they exist"
 	#foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) { Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] Applies to: ($($finegrainedpolicy).AppliesTo)"
 	foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) {$finegrainedpolicyappliesto=$finegrainedpolicy.AppliesTo; Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] AppliesTo: $($finegrainedpolicyappliesto)"
-	if (!($finegrainedpolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled" }
-    if (($finegrainedpolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold)" }
-    if (($finegrainedpolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength)" }
+	if (!($finegrainedpolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled (KB262)" }
+    if (($finegrainedpolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold) (KB263)" }
+    if (($finegrainedpolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength) (KB262)" }
     if (($finegrainedpolicy).ReversibleEncryptionEnabled) {Write-Both "    [!] Reversible encryption is enabled" }
-    if (($finegrainedpolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire" }
-    if (($finegrainedpolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount)" } }
+    if (($finegrainedpolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire (KB254)" }
+    if (($finegrainedpolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount) (KB262)" } }
 	Write-Both 	"    [-] Finished checking fine-grained password policy"
 }
 
 function Get-NULLSessions{
-    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymous -eq 0) {Write-Both "    [!] RestrictAnonymous is set to 0!" }
-    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymousSam -eq 0) {Write-Both "    [!] RestrictAnonymousSam is set to 0!" }
-    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).everyoneincludesanonymous -eq 1) {Write-Both "    [!] EveryoneIncludesAnonymous is set to 1!" }
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymous -eq 0) {Write-Both "    [!] RestrictAnonymous is set to 0! (KB81)" }
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymousSam -eq 0) {Write-Both "    [!] RestrictAnonymousSam is set to 0! (KB81)" }
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).everyoneincludesanonymous -eq 1) {Write-Both "    [!] EveryoneIncludesAnonymous is set to 1! (KB81)" }
 }
 function Get-DomainTrusts{#lists domain trusts if they are bad
     ForEach ($trust in (Get-ADObject -Filter {objectClass -eq "trustedDomain"} -Properties TrustPartner,TrustDirection,trustType,trustAttributes)){
         if ($trust.TrustDirection -eq 2){
             if ($trust.TrustAttributes -ne 1){ # 1 means trust is non-transitive so we chack for anything but that
-                Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain and it is Transitive!"}
-            else {Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain!"}
+                Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain and it is Transitive! (KB250)"}
+            else {Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain! (KB250)"}
         }
         if ($trust.TrustDirection -eq 3){
             if ($trust.TrustAttributes -ne 1){ # 1 means trust is non-transitive so we chack for anything but that
-                Write-Both "    [!] Bidirectional trust with domain $($trust.Name) and it is Transitive!" }
-            else {Write-Both "    [!] Bidirectional trust with domain $($trust.Name)!"}
+                Write-Both "    [!] Bidirectional trust with domain $($trust.Name) and it is Transitive! (KB250)" }
+            else {Write-Both "    [!] Bidirectional trust with domain $($trust.Name)! (KB250)"}
         }
     }
 }
@@ -171,10 +172,10 @@ function Get-WinVersion{
 }
 function Get-SMB1Support{#check if server supports SMBv1
     if ([single](Get-WinVersion) -le [single]6.1){# NT6.1 or less detected so checking reg key
-        if (!(Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).SMB1 -eq 0){Write-Both "    [!] SMBv1 is not disabled"}
+        if (!(Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).SMB1 -eq 0){Write-Both "    [!] SMBv1 is not disabled (KB290)"}
     }
     elseif ([single](Get-WinVersion) -ge [single]6.2){#NT6.2 or greater detected so using powershell function
-        if ((Get-SmbServerConfiguration).EnableSMB1Protocol){Write-Both "    [!] SMBv1 is enabled!"}
+        if ((Get-SmbServerConfiguration).EnableSMB1Protocol){Write-Both "    [!] SMBv1 is enabled! (KB290)"}
     }
 }
 function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed passwords in more than 90 days
@@ -235,7 +236,7 @@ function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.co
             [xml]$Xml = Get-Content ($File)
             if ($Xml.innerxml -like "*cpassword*"){
                 if (!(Test-Path "$outputdir\sysvol")) { New-Item -ItemType directory -Path "$outputdir\sysvol" | out-null }
-                Write-Both "    [!] cpassword found in file, copying to output folder"
+                Write-Both "    [!] cpassword found in file, copying to output folder (KB329)"
                 Write-Both "        $File"
                 copy-item -Path $File -Destination $outputdir\sysvol\$Distinguishedname.$Filename
                 $count++
@@ -263,10 +264,10 @@ function Get-InactiveAccounts{#lists accounts not used in past 180 days plus som
 function Get-AdminAccountChecks{# checks if Administrator account has been renamed, replaced and is no longer used.
     $AdministratorSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-500"
     $AdministratorSAMAccountName = (Get-ADUser -Filter {SID -eq $AdministratorSID} -properties SamAccountName).SamAccountName
-    if ($AdministratorSAMAccountName -eq "Administrator"){Write-Both "    [!] Local Administrator account (UID500) has not been renamed"}
-    elseif (!(Get-ADUser -Filter {samaccountname -eq "Administrator"})){Write-Both "    [!] Local Admini account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place!"}
+    if ($AdministratorSAMAccountName -eq "Administrator"){Write-Both "    [!] Local Administrator account (UID500) has not been renamed (KB309)"}
+    elseif (!(Get-ADUser -Filter {samaccountname -eq "Administrator"})){Write-Both "    [!] Local Admini account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place! (KB309)"}
     $AdministratorLastLogonDate =  (Get-ADUser -Filter {SID -eq $AdministratorSID}  -properties lastlogondate).lastlogondate
-    if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){Write-Both "    [!] UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate!"}
+    if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){Write-Both "    [!] UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate! (KB309)"}
 }
 function Get-DisabledAccounts{#lists disabled accounts
     $disabledaccounts = Search-ADaccount -AccountDisabled -UsersOnly
@@ -289,7 +290,7 @@ function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
         Add-Content -Path "$outputdir\accounts_passdontexpire.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] There are $count accounts that don't expire, see accounts_passdontexpire.txt"}
+    if ($count -gt 0){Write-Both "    [!] There are $count accounts that don't expire, see accounts_passdontexpire.txt (KB254)"}
 }
 function Get-OldBoxes{#lists server 2003/XP machines
     $count = 0
@@ -300,7 +301,7 @@ function Get-OldBoxes{#lists server 2003/XP machines
         Add-Content -Path "$outputdir\machines_old.txt" -Value "$($machine.Name), $($machine.OperatingSystem), $($machine.OperatingSystemServicePack), $($machine.OperatingSystemVersio), $($machine.IPv4Address)"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] We found $count machines running server 2003/XP! see machines_old.txt"}
+    if ($count -gt 0){Write-Both "    [!] We found $count machines running server 2003/XP! see machines_old.txt (KB3/37/KB259)"}
 }
 function Get-DCsNotOwnedByDA {#searches for DC objects not owned by the Domain Admins group
     $count = 0
