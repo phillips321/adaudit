@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v3.5 - Added KB more references for internal use
     v3.4 - Added KB references for internal use
     v3.3 - Added a greater level of accuracy to Inactive Accounts (thanks exceedio)
     v3.2 - Added search for DCs not owned by Domain Admins group
@@ -44,7 +45,7 @@ param (
   [switch]$authpolsilos = $false,
   [switch]$all = $false
 )
-$versionnum = "v3.4"
+$versionnum = "v3.5"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 
@@ -132,7 +133,7 @@ function Get-PasswordPolicy{
     if ((Get-ADDefaultDomainPasswordPolicy).ReversibleEncryptionEnabled) {Write-Both "    [!] Reversible encryption is enabled" }
     if ((Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire (KB254)" }
     if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount) (KB262)" }
-    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored!" }
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored! (KB510)" }
 	Write-Both 	"    [-] Finished checking default password policy"
 
 	Write-Both 	"    [+] Checking fine-grained password policies if they exist"
@@ -191,7 +192,7 @@ function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
     }
     if ($count -gt 0){Write-Both "    [!] $count accounts with passwords older than 90days, see accounts_with_old_passwords.txt"}
     $krbtgtPasswordDate = (get-aduser -Filter {samaccountname -eq "krbtgt"} -Properties PasswordLastSet).PasswordLastSet
-    if ($krbtgtPasswordDate -lt (Get-Date).AddDays(-180)){Write-Both "    [!] krbtgt password not changed since $krbtgtPasswordDate!"}
+    if ($krbtgtPasswordDate -lt (Get-Date).AddDays(-180)){Write-Both "    [!] krbtgt password not changed since $krbtgtPasswordDate! (KB253)"}
 }
 function Get-GPOtoFile{#oututs complete GPO report
     if (Test-Path "$outputdir\GPOReport.html") { Remove-Item "$outputdir\GPOReport.html" -Recurse; }
@@ -199,7 +200,7 @@ function Get-GPOtoFile{#oututs complete GPO report
     Write-Both "    [+] GPO Report saved to GPOReport.html"
     if (Test-Path "$outputdir\GPOReport.xml") { Remove-Item "$outputdir\GPOReport.xml" -Recurse; }
     Get-GPOReport -All -ReportType XML -Path "$outputdir\GPOReport.xml"
-    Write-Both "    [+] GPO Report saved to GPOReport.xml, now run Grouper offline using the following command"
+    Write-Both "    [+] GPO Report saved to GPOReport.xml, now run Grouper offline using the following command (KB499)"
     Write-Both "    [+]     PS>Import-Module Grouper.psm1 ; Invoke-AuditGPOReport -Path C:\GPOReport.xml -Level 3"
 }
 function Get-GPOsPerOU{#Lists all OUs and which GPOs apply to them
@@ -259,7 +260,7 @@ function Get-InactiveAccounts{#lists accounts not used in past 180 days plus som
             $count++
         }
     }
-    if ($count -gt 0){Write-Both "    [!] $count inactive user accounts(180days), see accounts_inactive.txt"}
+    if ($count -gt 0){Write-Both "    [!] $count inactive user accounts(180days), see accounts_inactive.txt (KB500)"}
 }
 function Get-AdminAccountChecks{# checks if Administrator account has been renamed, replaced and is no longer used.
     $AdministratorSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-500"
@@ -279,7 +280,7 @@ function Get-DisabledAccounts{#lists disabled accounts
         Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is disabled"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] $count disabled user accounts, see accounts_disabled.txt"}
+    if ($count -gt 0){Write-Both "    [!] $count disabled user accounts, see accounts_disabled.txt (KB501)"}
 }
 function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
     $count = 0
