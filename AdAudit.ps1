@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v4.0 - Added XML output for import to CheckSecCanopy
     v3.5 - Added KB more references for internal use
     v3.4 - Added KB references for internal use
     v3.3 - Added a greater level of accuracy to Inactive Accounts (thanks exceedio)
@@ -45,10 +46,25 @@ param (
   [switch]$authpolsilos = $false,
   [switch]$all = $false
 )
-$versionnum = "v3.5"
+$versionnum = "v4.0"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
-
+function Write-Nessus-Header(){#creates nessus XML file header
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<?xml version=`"1.0`" ?><AdAudit>"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<Report name=`"$env:ComputerName`" xmlns:cm=`"http://www.nessus.org/cm`">"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<ReportHost name=`"$env:ComputerName`"><HostProperties></HostProperties>"
+}
+function Write-Nessus-Finding( [string]$pluginname, [string]$pluginid, [string]$pluginexample){
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<ReportItem port=`"0`" svc_name=`"`" protocol=`"`" severity=`"0`" pluginID=`"ADAudit_$pluginid`" pluginName=`"$pluginname`" pluginFamily=`"Windows`">"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<description>There's an issue with $pluginname</description>"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<plugin_type>remote</plugin_type><risk_factor>Low</risk_factor>"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<solution>CCS Recommends fixing the issues with $pluginname on the host</solution>"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<synopsis>There's an issue with the $pluginname settings on the host</synopsis>"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<plugin_output>$pluginexample</plugin_output></ReportItem>"
+}
+function Write-Nessus-Footer(){
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "</ReportHost></Report></AdAudit>"
+}
 function Get-OUPerms{#Check for non-standard perms for authenticated users, domain users, users and everyone groups
     $count = 0
     $progresscount = 0
@@ -60,9 +76,11 @@ function Get-OUPerms{#Check for non-standard perms for authenticated users, doma
         $output = (Get-Acl AD:$object).Access | where-object {($_.IdentityReference -eq 'NT Authority\Authenticated Users') -or ($_.IdentityReference -eq 'Everyone') -or ($_.IdentityReference -like '*\Domain Users') -or ($_.IdentityReference -eq 'BUILTIN\Users')} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.AccessControlType -ne 'Deny')}
 		if ($output -ne $null) {$count++ ; Add-Content -Path "$outputdir\ou_permissions.txt" -Value  "OU: $object.DistinguishedName"; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "[!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
     }
-    if ($count -gt 0){Write-Both "    [!] Issue identified, see $outputdir\ou_permissions.txt"}
+    if ($count -gt 0){
+        Write-Both "    [!] Issue identified, see $outputdir\ou_permissions.txt"
+        Write-Nessus-Finding "OUPermissions" "KB551" (Get-Content -Path "$outputdir\ou_permissions.txt")
+    }
 }
-
 function Get-LAPSStatus{#Check for presence of LAPS in domain
         try{
         Get-ADObject "CN=ms-Mcs-AdmPwd,CN=Schema,CN=Configuration,$((Get-ADDomain).DistinguishedName)" -ErrorAction Stop | Out-Null
@@ -71,9 +89,9 @@ function Get-LAPSStatus{#Check for presence of LAPS in domain
     }
     catch{
         Write-Both "    [!] LAPS Not Installed in domain (KB258)"
+        Write-Nessus-Finding "LAPSMissing" "KB258" "LAPS Not Installed in domain"
     }
 }
-
 function Get-AdminSDHolders{#lists users and groups with AdminSDHolder set
     $count = 0
     $usersdaccounts = Get-ADUser -LDAPFilter "(admincount=1)"
@@ -83,8 +101,10 @@ function Get-AdminSDHolders{#lists users and groups with AdminSDHolder set
         Add-Content -Path "$outputdir\accounts_userAdminSDHolder.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] There are $count accounts with AdminSDHolder set, see accounts_useradminsdholder.txt (KB426)"}
-
+    if ($count -gt 0){
+        Write-Both "    [!] There are $count accounts with AdminSDHolder set, see accounts_useradminsdholder.txt (KB426)"
+        Write-Nessus-Finding "AdminSDHolders" "KB426" (Get-Content -Path "$outputdir\accounts_useradminsdholder.txt")
+    }
     $count = 0
     $groupsdaccounts = Get-ADGroup -LDAPFilter "(admincount=1)"
     $totalcount = $groupsdaccounts.count
@@ -93,9 +113,11 @@ function Get-AdminSDHolders{#lists users and groups with AdminSDHolder set
         Add-Content -Path "$outputdir\accounts_groupAdminSDHolder.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] There are $count groups with AdminSDHolder set, see accounts_groupsadminsdholder.txt (KB426)"}
+    if ($count -gt 0){
+        Write-Both "    [!] There are $count groups with AdminSDHolder set, see accounts_groupAdminSDHolder.txt (KB426)"
+        Write-Nessus-Finding "AdminSDHolders" "KB426" (Get-Content -Path "$outputdir\accounts_groupAdminSDHolder.txt")
+    }
 }
-
 function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
     if ([single](Get-WinVersion) -ge [single]6.3){#NT6.3 or greater detected so running this script
         $count = 0
@@ -107,7 +129,10 @@ function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and 
             Add-Content -Path "$outputdir\accounts_protectedusers.txt" -Value "$($account.SamAccountName) ($($account.Name))"
             $count++
         }
-        if ($count -gt 0){Write-Both "    [!] There are $count accounts in the 'Protected Users' group, see accounts_protectedusers.txt"}
+        if ($count -gt 0){
+            Write-Both "    [!] There are $count accounts in the 'Protected Users' group, see accounts_protectedusers.txt"
+            Write-Nessus-Finding "ProtectedUsers" "KB549" (Get-Content -Path "$outputdir\accounts_protectedusers.txt")
+        }
     }
 }
 function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies and silos (2012R2 and above)
@@ -120,50 +145,57 @@ function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies 
         if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policy Silos found in the domain"}
     }
 }
-
 function Get-MachineAccountQuota{#get number of machines a user can add to a domain
     $MachineAccountQuota = (Get-ADDomain | select -exp DistinguishedName | get-adobject -prop 'ms-DS-MachineAccountQuota' | select -exp ms-DS-MachineAccountQuota)
-    if ($MachineAccountQuota -gt 0){ Write-Both "    [!] Domain users can add $MachineAccountQuota devices to the domain! (KB251)" }
+    if ($MachineAccountQuota -gt 0){
+        Write-Both "    [!] Domain users can add $MachineAccountQuota devices to the domain! (KB251)"
+        Write-Nessus-Finding "DomainAccountQuota" "KB251" "Domain users can add $MachineAccountQuota devices to the domain"
+        }
 }
 function Get-PasswordPolicy{
 	Write-Both 	"    [+] Checking default password policy"
-    if (!(Get-ADDefaultDomainPasswordPolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled (KB262)" }
-    if ((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold) (KB263)" }
-    if ((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength) (KB262)" }
+    if (!(Get-ADDefaultDomainPasswordPolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled (KB262)" ; Write-Nessus-Finding "PasswordComplexity" "KB262" "Password Complexity not enabled"}
+    if ((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold) (KB263)"  ; Write-Nessus-Finding "LockoutThreshold" "KB263" "Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold)"}
+    if ((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength) (KB262)" ; Write-Nessus-Finding "PasswordLength" "KB262" "Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength)" }
     if ((Get-ADDefaultDomainPasswordPolicy).ReversibleEncryptionEnabled) {Write-Both "    [!] Reversible encryption is enabled" }
-    if ((Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire (KB254)" }
-    if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount) (KB262)" }
-    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored! (KB510)" }
+    if ((Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire (KB254)"  ; Write-Nessus-Finding "PasswordsDoNotExpire" "KB254" "Passwords do not expire"}
+    if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount) (KB262)" ; Write-Nessus-Finding "PasswordHistory" "KB262" "Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount)"}
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored! (KB510)" ; Write-Nessus-Finding "LMHashesAreStored" "KB510" "LM Hashes are stored" }
 	Write-Both 	"    [-] Finished checking default password policy"
 
 	Write-Both 	"    [+] Checking fine-grained password policies if they exist"
 	#foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) { Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] Applies to: ($($finegrainedpolicy).AppliesTo)"
 	foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) {$finegrainedpolicyappliesto=$finegrainedpolicy.AppliesTo; Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] AppliesTo: $($finegrainedpolicyappliesto)"
-	if (!($finegrainedpolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled (KB262)" }
-    if (($finegrainedpolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold) (KB263)" }
-    if (($finegrainedpolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength) (KB262)" }
+	if (!($finegrainedpolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled (KB262)" ; Write-Nessus-Finding "PasswordComplexity" "KB262" "Password Complexity not enabled"}
+    if (($finegrainedpolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $($finegrainedpolicy).LockoutThreshold) (KB263)"  ; Write-Nessus-Finding "LockoutThreshold" "KB263" " Lockout threshold is less than 5, currently set to $(($finegrainedpolicy).LockoutThreshold)" }
+    if (($finegrainedpolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $(($finegrainedpolicy).MinPasswordLength) (KB262)"  ; Write-Nessus-Finding "PasswordLength" "KB262" "Minimum password length is less than 14, currently set to $(($finegrainedpolicy).MinPasswordLength)"}
     if (($finegrainedpolicy).ReversibleEncryptionEnabled) {Write-Both "    [!] Reversible encryption is enabled" }
     if (($finegrainedpolicy).MaxPasswordAge -eq "00:00:00") {Write-Both "    [!] Passwords do not expire (KB254)" }
-    if (($finegrainedpolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount) (KB262)" } }
+    if (($finegrainedpolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $(($finegrainedpolicy).PasswordHistoryCount) (KB262)"  ; Write-Nessus-Finding "PasswordHistory" "KB262" "Passwords history is less than 12, currently set to $(($finegrainedpolicy).PasswordHistoryCount)"} }
 	Write-Both 	"    [-] Finished checking fine-grained password policy"
 }
-
 function Get-NULLSessions{
-    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymous -eq 0) {Write-Both "    [!] RestrictAnonymous is set to 0! (KB81)" }
-    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymousSam -eq 0) {Write-Both "    [!] RestrictAnonymousSam is set to 0! (KB81)" }
-    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).everyoneincludesanonymous -eq 1) {Write-Both "    [!] EveryoneIncludesAnonymous is set to 1! (KB81)" }
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymous -eq 0) {Write-Both "    [!] RestrictAnonymous is set to 0! (KB81)" ; Write-Nessus-Finding "NullSessions" "KB81" " RestrictAnonymous is set to 0"}
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymousSam -eq 0) {Write-Both "    [!] RestrictAnonymousSam is set to 0! (KB81)" ; Write-Nessus-Finding "NullSessions" "KB81" " RestrictAnonymous is set to 0" }
+    if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).everyoneincludesanonymous -eq 1) {Write-Both "    [!] EveryoneIncludesAnonymous is set to 1! (KB81)" ; Write-Nessus-Finding "NullSessions" "KB81" "EveryoneIncludesAnonymous is set to 1" }
 }
 function Get-DomainTrusts{#lists domain trusts if they are bad
     ForEach ($trust in (Get-ADObject -Filter {objectClass -eq "trustedDomain"} -Properties TrustPartner,TrustDirection,trustType,trustAttributes)){
         if ($trust.TrustDirection -eq 2){
-            if ($trust.TrustAttributes -ne 1){ # 1 means trust is non-transitive so we chack for anything but that
-                Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain and it is Transitive! (KB250)"}
-            else {Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain! (KB250)"}
+            if ($trust.TrustAttributes -ne 1){ # 1 means trust is non-transitive so we check for anything but that
+                Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain and it is Transitive! (KB250)"
+                Write-Nessus-Finding "DomainTrusts" "KB250" "The domain $($trust.Name) is trusted by $env:UserDomain and it is Transitive."}
+            else{
+                Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain! (KB250)"
+                Write-Nessus-Finding "DomainTrusts" "KB250" "The domain $($trust.Name) is trusted by $env:UserDomain!"}
         }
         if ($trust.TrustDirection -eq 3){
-            if ($trust.TrustAttributes -ne 1){ # 1 means trust is non-transitive so we chack for anything but that
-                Write-Both "    [!] Bidirectional trust with domain $($trust.Name) and it is Transitive! (KB250)" }
-            else {Write-Both "    [!] Bidirectional trust with domain $($trust.Name)! (KB250)"}
+            if ($trust.TrustAttributes -ne 1){ # 1 means trust is non-transitive so we check for anything but that
+                Write-Both "    [!] Bidirectional trust with domain $($trust.Name) and it is Transitive! (KB250)"
+                Write-Nessus-Finding "DomainTrusts" "KB250" "Bidirectional trust with domain $($trust.Name) and it is Transitive!"}
+            else {
+                Write-Both "    [!] Bidirectional trust with domain $($trust.Name)! (KB250)"
+                Write-Nessus-Finding "DomainTrusts" "KB250" "Bidirectional trust with domain $($trust.Name)"}
         }
     }
 }
@@ -173,10 +205,16 @@ function Get-WinVersion{
 }
 function Get-SMB1Support{#check if server supports SMBv1
     if ([single](Get-WinVersion) -le [single]6.1){# NT6.1 or less detected so checking reg key
-        if (!(Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).SMB1 -eq 0){Write-Both "    [!] SMBv1 is not disabled (KB290)"}
+        if (!(Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).SMB1 -eq 0){
+            Write-Both "    [!] SMBv1 is not disabled (KB290)"
+            Write-Nessus-Finding "SMBv1Support" "KB290" "SMBv1 is enabled"
+        }
     }
     elseif ([single](Get-WinVersion) -ge [single]6.2){#NT6.2 or greater detected so using powershell function
-        if ((Get-SmbServerConfiguration).EnableSMB1Protocol){Write-Both "    [!] SMBv1 is enabled! (KB290)"}
+        if ((Get-SmbServerConfiguration).EnableSMB1Protocol){
+            Write-Both "    [!] SMBv1 is enabled! (KB290)"
+            Write-Nessus-Finding "SMBv1Support" "KB290" "SMBv1 is enabled"
+        }
     }
 }
 function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed passwords in more than 90 days
@@ -190,9 +228,15 @@ function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
         Add-Content -Path "$outputdir\accounts_with_old_passwords.txt" -Value "User $($account.SamAccountName) ($($account.Name)) has not changed thier password since $datelastchanged"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] $count accounts with passwords older than 90days, see accounts_with_old_passwords.txt"}
+    if ($count -gt 0){
+        Write-Both "    [!] $count accounts with passwords older than 90days, see accounts_with_old_passwords.txt (KB550)"
+        Write-Nessus-Finding "AccountsWithOldPasswords" "KB550" (Get-Content -Path "$outputdir\accounts_with_old_passwords.txt")
+    }
     $krbtgtPasswordDate = (get-aduser -Filter {samaccountname -eq "krbtgt"} -Properties PasswordLastSet).PasswordLastSet
-    if ($krbtgtPasswordDate -lt (Get-Date).AddDays(-180)){Write-Both "    [!] krbtgt password not changed since $krbtgtPasswordDate! (KB253)"}
+    if ($krbtgtPasswordDate -lt (Get-Date).AddDays(-180)){
+        Write-Both "    [!] krbtgt password not changed since $krbtgtPasswordDate! (KB253)"
+        Write-Nessus-Finding "krbtgtPasswordNotChanged" "KB253" "krbtgt password not changed since $krbtgtPasswordDate"
+    }
 }
 function Get-GPOtoFile{#oututs complete GPO report
     if (Test-Path "$outputdir\GPOReport.html") { Remove-Item "$outputdir\GPOReport.html" -Recurse; }
@@ -244,7 +288,10 @@ function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.co
             }
         }
     }
-    if ($count -eq 0){Write-Both "    ...cpassword not found in the $($XMLFiles.count) XML files found."}
+    if ($count -eq 0){
+        Write-Both "    ...cpassword not found in the $($XMLFiles.count) XML files found."
+        Write-Nessus-Finding "GPOPasswordStorage" "KB329" (Get-Content -Path "$outputdir\sysvol\*")
+    }
 }
 function Get-InactiveAccounts{#lists accounts not used in past 180 days plus some checks for admin accounts
     $count = 0
@@ -260,15 +307,27 @@ function Get-InactiveAccounts{#lists accounts not used in past 180 days plus som
             $count++
         }
     }
-    if ($count -gt 0){Write-Both "    [!] $count inactive user accounts(180days), see accounts_inactive.txt (KB500)"}
+    if ($count -gt 0){
+        Write-Both "    [!] $count inactive user accounts(180days), see accounts_inactive.txt (KB500)"
+        Write-Nessus-Finding "InactiveAccounts" "KB500" (Get-Content -Path "$outputdir\accounts_inactive.txt")
+    }
 }
 function Get-AdminAccountChecks{# checks if Administrator account has been renamed, replaced and is no longer used.
     $AdministratorSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-500"
     $AdministratorSAMAccountName = (Get-ADUser -Filter {SID -eq $AdministratorSID} -properties SamAccountName).SamAccountName
-    if ($AdministratorSAMAccountName -eq "Administrator"){Write-Both "    [!] Local Administrator account (UID500) has not been renamed (KB309)"}
-    elseif (!(Get-ADUser -Filter {samaccountname -eq "Administrator"})){Write-Both "    [!] Local Admini account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place! (KB309)"}
+    if ($AdministratorSAMAccountName -eq "Administrator"){
+        Write-Both "    [!] Local Administrator account (UID500) has not been renamed (KB309)"
+        Write-Nessus-Finding "AdminAccountRenamed" "KB309" "Local Administrator account (UID500) has not been renamed"
+    }
+    elseif (!(Get-ADUser -Filter {samaccountname -eq "Administrator"})){
+        Write-Both "    [!] Local Admini account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place! (KB309)"
+        Write-Nessus-Finding "AdminAccountRenamed" "KB309" "Local Admini account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place"
+    }
     $AdministratorLastLogonDate =  (Get-ADUser -Filter {SID -eq $AdministratorSID}  -properties lastlogondate).lastlogondate
-    if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){Write-Both "    [!] UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate! (KB309)"}
+    if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){
+        Write-Both "    [!] UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate! (KB309)"
+        Write-Nessus-Finding "AdminAccountRenamed" "KB309" "UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate"
+    }
 }
 function Get-DisabledAccounts{#lists disabled accounts
     $disabledaccounts = Search-ADaccount -AccountDisabled -UsersOnly
@@ -280,7 +339,10 @@ function Get-DisabledAccounts{#lists disabled accounts
         Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is disabled"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] $count disabled user accounts, see accounts_disabled.txt (KB501)"}
+    if ($count -gt 0){
+        Write-Both "    [!] $count disabled user accounts, see accounts_disabled.txt (KB501)"
+        Write-Nessus-Finding "DisabledAccounts" "KB501" (Get-Content -Path "$outputdir\accounts_disabled.txt")
+    }
 }
 function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
     $count = 0
@@ -291,7 +353,10 @@ function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
         Add-Content -Path "$outputdir\accounts_passdontexpire.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] There are $count accounts that don't expire, see accounts_passdontexpire.txt (KB254)"}
+    if ($count -gt 0){
+        Write-Both "    [!] There are $count accounts that don't expire, see accounts_passdontexpire.txt (KB254)"
+        Write-Nessus-Finding "AccountsThatDontExpire" "KB254" (Get-Content -Path "$outputdir\accounts_passdontexpire.txt")
+    }
 }
 function Get-OldBoxes{#lists server 2003/XP machines
     $count = 0
@@ -302,22 +367,30 @@ function Get-OldBoxes{#lists server 2003/XP machines
         Add-Content -Path "$outputdir\machines_old.txt" -Value "$($machine.Name), $($machine.OperatingSystem), $($machine.OperatingSystemServicePack), $($machine.OperatingSystemVersio), $($machine.IPv4Address)"
         $count++
     }
-    if ($count -gt 0){Write-Both "    [!] We found $count machines running server 2003/XP! see machines_old.txt (KB3/37/KB259)"}
+    if ($count -gt 0){
+        Write-Both "    [!] We found $count machines running server 2003/XP! see machines_old.txt (KB3/37/KB259)"
+        Write-Nessus-Finding "OldBoxes" "KB259" (Get-Content -Path "$outputdir\machines_old.txt")
+    }
 }
 function Get-DCsNotOwnedByDA {#searches for DC objects not owned by the Domain Admins group
     $count = 0
     $progresscount = 0
     $domaincontrollers = Get-ADComputer -Filter {PrimaryGroupID -eq 516 -or PrimaryGroupID -eq 521} -Property *
     $totalcount = $domaincontrollers.count
-    ForEach ($machine in $domaincontrollers){
-        $progresscount++
-        Write-Progress -Activity "Searching for DCs not owned by Domain Admins group..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
-        if ($machine.ntsecuritydescriptor.Owner -ne "$env:UserDomain\Domain Admins"){
-            Add-Content -Path "$outputdir\dcs_not_owned_by_da.txt" -Value "$($machine.Name), $($machine.OperatingSystem), $($machine.OperatingSystemServicePack), $($machine.OperatingSystemVersio), $($machine.IPv4Address), owned by $($machine.ntsecuritydescriptor.Owner)"
-            $count++
+    if ($totalcount -gt 0){
+        ForEach ($machine in $domaincontrollers){
+            $progresscount++
+            Write-Progress -Activity "Searching for DCs not owned by Domain Admins group..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
+            if ($machine.ntsecuritydescriptor.Owner -ne "$env:UserDomain\Domain Admins"){
+                Add-Content -Path "$outputdir\dcs_not_owned_by_da.txt" -Value "$($machine.Name), $($machine.OperatingSystem), $($machine.OperatingSystemServicePack), $($machine.OperatingSystemVersio), $($machine.IPv4Address), owned by $($machine.ntsecuritydescriptor.Owner)"
+                $count++
+            }
         }
     }
-    if ($count -gt 0){Write-Both "    [!] We found $count DCs not owned by Domains Admins group! see dcs_not_owned_by_da.tx"}
+    if ($count -gt 0){
+        Write-Both "    [!] We found $count DCs not owned by Domains Admins group! see dcs_not_owned_by_da.tx"
+        Write-Nessus-Finding "DCsNotByDA" "KB547" (Get-Content -Path "$outputdir\dcs_not_owned_by_da.txt")
+    }
 }
 function Get-HostDetails{#gets basic information about the host
     Write-Both "    [+] Device Name:  $env:ComputerName"
@@ -329,23 +402,23 @@ function Get-HostDetails{#gets basic information about the host
 }
 function Get-FunctionalLevel{# Gets the functional level for domain and forest
     $DomainLevel = (Get-ADDomain).domainMode
-    if ($DomainLevel -eq "Windows2000Domain" -and [single](Get-WinVersion) -gt 5.0){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"}
-    if ($DomainLevel -eq "Windows2003InterimDomain" -and [single](Get-WinVersion) -gt 5.1){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"}
-    if ($DomainLevel -eq "Windows2003Domain" -and [single](Get-WinVersion) -gt 5.2){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"}
-    if ($DomainLevel -eq "Windows2008Domain" -and [single](Get-WinVersion) -gt 6.0){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"}
-    if ($DomainLevel -eq "Windows2008R2Domain" -and [single](Get-WinVersion) -gt 6.1){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"}
-    if ($DomainLevel -eq "Windows2012Domain" -and [single](Get-WinVersion) -gt 6.2){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"}
-    if ($DomainLevel -eq "Windows2012R2Domain" -and [single](Get-WinVersion) -gt 6.3){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"}
-    if ($DomainLevel -eq "Windows2016Domain" -and [single](Get-WinVersion) -gt 10.0){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"}
+    if ($DomainLevel -eq "Windows2000Domain" -and [single](Get-WinVersion) -gt 5.0){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
+    if ($DomainLevel -eq "Windows2003InterimDomain" -and [single](Get-WinVersion) -gt 5.1){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
+    if ($DomainLevel -eq "Windows2003Domain" -and [single](Get-WinVersion) -gt 5.2){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
+    if ($DomainLevel -eq "Windows2008Domain" -and [single](Get-WinVersion) -gt 6.0){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
+    if ($DomainLevel -eq "Windows2008R2Domain" -and [single](Get-WinVersion) -gt 6.1){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
+    if ($DomainLevel -eq "Windows2012Domain" -and [single](Get-WinVersion) -gt 6.2){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
+    if ($DomainLevel -eq "Windows2012R2Domain" -and [single](Get-WinVersion) -gt 6.3){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
+    if ($DomainLevel -eq "Windows2016Domain" -and [single](Get-WinVersion) -gt 10.0){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
     $ForestLevel = (Get-ADForest).ForestMode
-    if ($ForestLevel -eq "Windows2000Forest" -and [single](Get-WinVersion) -gt 5.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
-    if ($ForestLevel -eq "Windows2003InterimForest" -and [single](Get-WinVersion) -gt 5.1){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
-    if ($ForestLevel -eq "Windows2003Forest" -and [single](Get-WinVersion) -gt 5.2){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
-    if ($ForestLevel -eq "Windows2008Forest" -and [single](Get-WinVersion) -gt 6.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
-    if ($ForestLevel -eq "Windows2008R2Forest" -and [single](Get-WinVersion) -gt 6.1){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
-    if ($ForestLevel -eq "Windows2012Forest" -and [single](Get-WinVersion) -gt 6.2){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
-    if ($ForestLevel -eq "Windows2012R2Forest" -and [single](Get-WinVersion) -gt 6.3){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
-    if ($ForestLevel -eq "Windows2016Forest" -and [single](Get-WinVersion) -gt 10.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"}
+    if ($ForestLevel -eq "Windows2000Forest" -and [single](Get-WinVersion) -gt 5.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
+    if ($ForestLevel -eq "Windows2003InterimForest" -and [single](Get-WinVersion) -gt 5.1){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
+    if ($ForestLevel -eq "Windows2003Forest" -and [single](Get-WinVersion) -gt 5.2){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
+    if ($ForestLevel -eq "Windows2008Forest" -and [single](Get-WinVersion) -gt 6.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
+    if ($ForestLevel -eq "Windows2008R2Forest" -and [single](Get-WinVersion) -gt 6.1){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
+    if ($ForestLevel -eq "Windows2012Forest" -and [single](Get-WinVersion) -gt 6.2){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
+    if ($ForestLevel -eq "Windows2012R2Forest" -and [single](Get-WinVersion) -gt 6.3){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
+    if ($ForestLevel -eq "Windows2016Forest" -and [single](Get-WinVersion) -gt 10.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
 }
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
@@ -363,6 +436,8 @@ Write-Both "[*] Script start time $starttime"
 if (Get-Module -ListAvailable -Name ActiveDirectory){import-module ActiveDirectory} else {write-host "[!] ActiveDirectory module not installed, exiting..." ; exit}
 if (Get-Module -ListAvailable -Name ServerManager){import-module ServerManager} else {write-host "[!] ServerManager module not installed, exiting..." ; exit}
 if (Get-Module -ListAvailable -Name GroupPolicy){import-module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
+if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\adaudit.nessus" | out-null }
+Write-Nessus-Header
 write-host "[+] Outputting to $outputdir"
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
 if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
@@ -390,5 +465,6 @@ if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "    -authpolsilos checks for existenece of authentication policies and silos"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
 }
+Write-Nessus-Footer
 $endtime = get-date
 Write-Both "[*] Script end time $endtime"
