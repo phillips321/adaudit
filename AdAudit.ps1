@@ -420,6 +420,106 @@ function Get-FunctionalLevel{# Gets the functional level for domain and forest
     if ($ForestLevel -eq "Windows2012R2Forest" -and [single](Get-WinVersion) -gt 6.3){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
     if ($ForestLevel -eq "Windows2016Forest" -and [single](Get-WinVersion) -gt 10.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
 }
+function Get-GPOEnum{#Loops GPOs for groups that have domain join permissions assigned and for NTLM settings
+    $AllowedJoin = @();
+    $DenyNTLM = @();
+    $AuditNTLM = @();
+    $NTLMAuthExceptions = @();
+    $AllGPOs = Get-GPO -All | sort DisplayName;
+    foreach ($GPO in $AllGPOs){
+        $GPOreport = Get-GPOReport -Guid $GPO.id -ReportType Xml;
+        #Look for GPO that allows join PC to domain
+        $permissionindex = $GPOreport.IndexOf('<q1:Name>SeMachineAccountPrivilege</q1:Name>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeMachineAccountPrivilege').member) ){
+                $obj = New-Object -TypeName psobject;
+                $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+                $obj | Add-Member -MemberType NoteProperty -Name SID -Value $member.sid.'#text';
+                $obj | Add-Member -MemberType NoteProperty -Name Name -Value $member.name.'#text';
+
+                $AllowedJoin += $obj;
+            }
+        }
+        #Look for GPO that denies NTLM
+        $permissionindex = $GPOreport.IndexOf('RestrictNTLMInDomain</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            $value = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'RestrictNTLMInDomain';
+            $obj = New-Object -TypeName psobject;
+            $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+            $obj | Add-Member -MemberType NoteProperty -Name Value -Value $value.Display.DisplayString;
+            $DenyNTLM += $obj;
+        }
+        #Look for GPO that audits NTLM
+        $permissionindex = $GPOreport.IndexOf('AuditNTLMInDomain</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            $value = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'AuditNTLMInDomain';
+            $obj = New-Object -TypeName psobject;
+            $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+            $obj | Add-Member -MemberType NoteProperty -Name Value -Value $value.Display.DisplayString;
+            $AuditNTLM += $obj;
+        }
+        #Look for GPO that allows NTLM exclusions
+        $permissionindex = $GPOreport.IndexOf('DCAllowedNTLMServers</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            foreach ($member in (($xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'DCAllowedNTLMServers').SettingStrings.Value) ){
+                $NTLMAuthExceptions += $member;
+            }
+        }
+    }
+    #Output for join PC to domain
+    foreach($record in $AllowedJoin){
+        Write-Both "    [+] GPO [$($record.GPO)] allows object [$($record.Name)] with SID [$($record.SID)] to join computers to domain"
+    }
+    #Output for deny NTLM
+    if($DenyNTLM.count -eq 0){
+        Write-Both "    [!] NTLM authentication allowed in the domain"
+    }else{
+        foreach($record in $DenyNTLM){
+            Write-Both "    [+] NTLM authentication restricted by GPO [$($record.gpo)] with value [$($record.value)]"
+        }
+    }
+    #Output for NTLM exceptions
+    if($NTLMAuthExceptions.count -ne 0){
+        Write-Both "    [+] List of NTLM auth exceptions"
+        foreach($record in $NTLMAuthExceptions){
+            Write-Both "        [-] $($record)"
+        }
+    }
+    #Output for NTLM audit
+    if($AuditNTLM.count -eq 0){
+        Write-Both "    [!] NTLM audit is not enabled in the domain"
+    }else{
+        foreach($record in $DenyNTLM){
+            Write-Both "    [+] NTLM audit enabled by GPO [$($record.gpo)] with value [$($record.value)]"
+        }
+    }
+
+}
+function Get-PrivelegedGroupMembership{#List Domain Admins, Enterprise Admins and Schema Admins members
+    $SchemaMemebers = Get-ADGroup 'Schema Admins' | Get-ADGroupMember;
+    $EnterpriseMemebers = Get-ADGroup 'Enterprise Admins' | Get-ADGroupMember;
+    $DomainAdminsMemebers = Get-ADGroup 'Domain Admins' | Get-ADGroupMember;
+    if($SchemaMemebers.count -ne 0){
+            Write-Both "    [!] Schema Admins not empty!!!"
+        foreach($member in $SchemaMemebers){
+            Write-Both "        [-] $($member.objectClass) $($member.name)"
+        }
+    }
+    if($EnterpriseMemebers.count -ne 0){
+            Write-Both "    [!] Enterprise Admins not empty!!!"
+        foreach($member in $EnterpriseMemebers){
+            Write-Both "        [-] $($member.objectClass) $($member.name)"
+        }
+    }
+    Write-Both "    [+] Domain Admins members"
+    foreach($member in $DomainAdminsMemebers){
+        Write-Both "        [-] $($member.objectClass) $($member.name)"
+    }
+}
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
@@ -440,7 +540,7 @@ if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\ad
 Write-Nessus-Header
 write-host "[+] Outputting to $outputdir"
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-PrivelegedGroupMembership ; Get-MachineAccountQuota; Get-GPOEnum ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
