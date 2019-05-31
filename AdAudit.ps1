@@ -44,7 +44,7 @@ param (
   [switch]$ouperms = $false,
   [switch]$laps = $false,
   [switch]$authpolsilos = $false,
-  [switch]$all = $true
+  [switch]$all = $false
 )
 $versionnum = "v4.0"
 function Write-Both(){#writes to console screen and output file
@@ -638,7 +638,6 @@ function Get-DCEval{#Basic validation of all DCs in forest
     Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!"; 
 }
 
-
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
 $scriptname = $MyInvocation.MyCommand.Name
@@ -662,7 +661,7 @@ if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
-if ($ntds) { $running=$true; Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit }
+if ($ntds -Or $all) { $running=$true; Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit }
 if ($oldboxes -Or $all) { $running=$true; Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes }
 if ($gpo -Or $all) { $running=$true; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS }
 if ($ouperms -Or $all) { $running=$true; Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms }
