@@ -585,6 +585,7 @@ function Get-GPOEnum{#Loops GPOs for some important domain-wide settings
         }else{
             Write-Both "    [+] NTLM authentication hardening implemented, but NTLM not denied";
             foreach($record in $HardenNTLM){
+                Write-Both "        [-] $($record.value)";
                 Add-Content -Path "$outputdir\ntlm_restrictions.txt" -Value "NTLM restricted by GPO [$($record.gpo)] with value [$($record.value)]";
             }
         }
