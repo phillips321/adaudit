@@ -44,7 +44,7 @@ param (
   [switch]$ouperms = $false,
   [switch]$laps = $false,
   [switch]$authpolsilos = $false,
-  [switch]$all = $false
+  [switch]$all = $true
 )
 $versionnum = "v4.0"
 function Write-Both(){#writes to console screen and output file
@@ -425,6 +425,7 @@ function Get-GPOEnum{#Loops GPOs for groups that have domain join permissions as
     $DenyNTLM = @();
     $AuditNTLM = @();
     $NTLMAuthExceptions = @();
+    $EncryptionTypesNotConfigured = $true;
     $AllGPOs = Get-GPO -All | sort DisplayName;
     foreach ($GPO in $AllGPOs){
         $GPOreport = Get-GPOReport -Guid $GPO.id -ReportType Xml;
@@ -469,6 +470,46 @@ function Get-GPOEnum{#Loops GPOs for groups that have domain join permissions as
                 $NTLMAuthExceptions += $member;
             }
         }
+        #Validate Kerberos Encryption algorythm
+        $permissionindex = $GPOreport.IndexOf('MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters\SupportedEncryptionTypes');
+        if($permissionindex -gt 0){
+            $EncryptionTypesNotConfigured = $false;
+            $xmlreport = [xml]$GPOreport;
+            $EncryptionTypes = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions.Display.DisplayFields.Field
+            if(($EncryptionTypes | ? name -eq 'DES_CBC_CRC' | select -ExpandProperty value) -eq 'true'){
+                Write-Both "    [!] GPO [$($GPO.DisplayName)] enabled DES_CBC_CRC for Kerberos!"
+            }elseif(($EncryptionTypes | ? name -eq 'DES_CBC_MD5' | select -ExpandProperty value) -eq 'true'){
+                Write-Both "    [!] GPO [$($GPO.DisplayName)] enabled DES_CBC_MD5 for Kerberos!"
+            }elseif(($EncryptionTypes | ? name -eq 'RC4_HMAC_MD5' | select -ExpandProperty value) -eq 'true'){
+                Write-Both "    [!] GPO [$($GPO.DisplayName)] enabled RC4_HMAC_MD5 for Kerberos!"
+            }elseif(($EncryptionTypes | ? name -eq 'AES128_HMAC_SHA1' | select -ExpandProperty value) -eq 'false'){
+                Write-Both "    [!] AES128_HMAC_SHA1 not enabled for Kerberos!"
+            }elseif(($EncryptionTypes | ? name -eq 'AES256_HMAC_SHA1' | select -ExpandProperty value) -eq 'false'){
+                Write-Both "    [!] AES256_HMAC_SHA1 not enabled for Kerberos!"
+            }elseif(($EncryptionTypes | ? name -eq 'Future encryption types' | select -ExpandProperty value) -eq 'false'){
+                Write-Both "    [!] Future encryption types not enabled for Kerberos!"
+            }
+        }
+        #Validates Default Domain Controllers Policy
+        $permissionindex = $GPOreport.IndexOf('SeInteractiveLogonRight');
+        $ExcessiveDCInteractiveLogon = $false;
+        if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+            $xmlreport = [xml]$GPOreport;
+            foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeInteractiveLogonRight').member)){
+                if($member.name.'#text' -ne 'BUILTIN\Administrators' -and $member.name.'#text' -ne 'NT AUTHORITY\ENTERPRISE DOMAIN CONTROLLERS'){
+                    $ExcessiveDCInteractiveLogon = $true;
+                    Add-Content -Path "$outputdir\dc_interactive_logon.txt" -Value "$($member.name.'#text')";
+                }
+            }
+        }
+    }
+    #Output for Default Domain Controllers Policy
+    if($ExcessiveDCInteractiveLogon){
+        Write-Both "    [!] Excessive Interactive logon permissions to the DCs detected!!!"
+    }
+    #Output for Validate Kerberos Encryption algorythm
+    if($EncryptionTypesNotConfigured){
+        Write-Both "    [!] GPO ""Network security: Configure encryption types allowed for Kerberos"" is not configured! You have RC4_HMAC_MD5 enabled for Kerberos!"
     }
     #Output for join PC to domain
     foreach($record in $AllowedJoin){
@@ -476,7 +517,7 @@ function Get-GPOEnum{#Loops GPOs for groups that have domain join permissions as
     }
     #Output for deny NTLM
     if($DenyNTLM.count -eq 0){
-        Write-Both "    [!] NTLM authentication allowed in the domain"
+        Write-Both "    [!] No GPO with deny NTLM configured!"
     }else{
         foreach($record in $DenyNTLM){
             Write-Both "    [+] NTLM authentication restricted by GPO [$($record.gpo)] with value [$($record.value)]"
@@ -491,35 +532,112 @@ function Get-GPOEnum{#Loops GPOs for groups that have domain join permissions as
     }
     #Output for NTLM audit
     if($AuditNTLM.count -eq 0){
-        Write-Both "    [!] NTLM audit is not enabled in the domain"
+        Write-Both "    [!] GPO with NTLM audit is not enabled in the domain"
     }else{
         foreach($record in $DenyNTLM){
             Write-Both "    [+] NTLM audit enabled by GPO [$($record.gpo)] with value [$($record.value)]"
         }
     }
-
 }
 function Get-PrivelegedGroupMembership{#List Domain Admins, Enterprise Admins and Schema Admins members
     $SchemaMemebers = Get-ADGroup 'Schema Admins' | Get-ADGroupMember;
     $EnterpriseMemebers = Get-ADGroup 'Enterprise Admins' | Get-ADGroupMember;
     $DomainAdminsMemebers = Get-ADGroup 'Domain Admins' | Get-ADGroupMember;
-    if($SchemaMemebers.count -ne 0){
-            Write-Both "    [!] Schema Admins not empty!!!"
+    if(($SchemaMemebers | measure).count -ne 0){
+            Write-Both "    [!] Schema Admins not empty!!!";
         foreach($member in $SchemaMemebers){
-            Write-Both "        [-] $($member.objectClass) $($member.name)"
+            Add-Content -Path "$outputdir\schema_admins.txt" -Value "$($member.objectClass) $($member.name)";
+            Write-Both "        [-] $($member.objectClass) $($member.name)";
         }
     }
-    if($EnterpriseMemebers.count -ne 0){
-            Write-Both "    [!] Enterprise Admins not empty!!!"
+    if(($EnterpriseMemebers | measure).count -ne 0){
+            Write-Both "    [!] Enterprise Admins not empty!!!";
         foreach($member in $EnterpriseMemebers){
-            Write-Both "        [-] $($member.objectClass) $($member.name)"
+            Add-Content -Path "$outputdir\enterprise_admins.txt" -Value "$($member.objectClass) $($member.name)";
+            Write-Both "        [-] $($member.objectClass) $($member.name)";
         }
     }
-    Write-Both "    [+] Domain Admins members"
     foreach($member in $DomainAdminsMemebers){
-        Write-Both "        [-] $($member.objectClass) $($member.name)"
+        Add-Content -Path "$outputdir\doamin_admins.txt" -Value "$($member.objectClass) $($member.name)";
     }
 }
+function Get-DCEval{#Basic validation of all DCs in forest
+    #Collect all DCs in forest
+    $Forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest();
+    $ADs = $Forest.Sites.Servers | %{ Get-ADDomainController $_.Name };
+    #Valide OS version of DCs
+    if( ( $ads.operatingsystem | select -Unique ).count -eq 1 ){
+        Write-Both "    [+] All DCs are the same OS version of $($ads.operatingsystem | select -Unique)";
+    }else{
+        Write-Both "    [!] Operating system differs across DCs!!!";
+        if( ( $ads | ? OperatingSystem -Match '2003' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2003";
+            $ads | ? OperatingSystem -Match '2003' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2008 !(R2)' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2008";
+            $ads | ? OperatingSystem -Match '2008 !(R2)' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2008 R2' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2008 R2";
+            $ads | ? OperatingSystem -Match '2008 R2' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2012 !(R2)' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2012";
+            $ads | ? OperatingSystem -Match '2012 !(R2)' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2012 R2' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2012 R2";
+            $ads | ? OperatingSystem -Match '2012 R2' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2016' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2016";
+            $ads | ? OperatingSystem -Match '2016' | %{Write-Both "            [-] $($_.Name)"};
+        }    
+    }
+    #Valide DCs hotfix level
+    if( ( $ads.OperatingSystemHotfix | select -Unique ).count -eq 1 -or ( $ads.OperatingSystemHotfix | select -Unique ) -eq $null ){
+        Write-Both "    [+] All DCs have the same hotfix of [$($ads.OperatingSystemHotfix | select -Unique)]";
+    }else{
+        Write-Both "    [!] Hotfix level differs across DCs!!!";
+        $ads | %{Write-Both "        [-] DC $($_.Name) hotfix [$($ads.OperatingSystemHotfix)]"};
+    }
+    #Valide DCs Service Pack level
+    if( ( $ads.OperatingSystemServicePack | select -Unique ).count -eq 1 -or ( $ads.OperatingSystemServicePack | select -Unique ) -eq $null){
+        Write-Both "    [+] All DCs have the same Service Pack of [$($ads.OperatingSystemServicePack | select -Unique)]";
+    }else{
+        Write-Both "    [!] Service Pack level differs across DCs!!!";
+        $ads | %{Write-Both "        [-] DC $($_.Name) Service Pack [$($ads.OperatingSystemServicePack)]"};
+    }
+    #Valide DCs OS Version
+    if( ( $ads.OperatingSystemVersion | select -Unique ).count -eq 1 -or ( $ads.OperatingSystemVersion | select -Unique ) -eq $null){
+        Write-Both "    [+] All DCs have the same OS Version of [$($ads.OperatingSystemVersion | select -Unique)]";
+    }else{
+        Write-Both "    [!] OS Version differs across DCs!!!";
+        $ads | %{Write-Both "        [-] DC $($_.Name) OS Version [$($ads.OperatingSystemVersion)]"};
+    }
+    #List sites without GC
+    $SitesWithNoGC = $false;
+    foreach($Site in $Forest.Sites){
+        if(($ads | ? Site -eq $Site.Name | ? IsGlobalCatalog -eq True) -eq $null) {$SitesWithNoGC = $true;Add-Content -Path "$outputdir\sites_no_gc.txt" -Value "$($Site.Name)"; }
+    }
+    Write-Both "    [!] You have sites with no Global Catalog!"; 
+    #Does one DC holds all FSMO
+    if(($ADs | ? OperationMasterRoles -ne $null | measure).count -eq 1){
+        Write-Both "    [!] DC $($ADs | ? OperationMasterRoles -ne $null | select -ExpandProperty hostname) holds all FSMO roles!"
+    }
+    #DCs with weak Kerberos algorythm
+    $ADcomputers = $ads | %{Get-ADComputer $_.Name -Properties KerberosEncryptionType};
+    $WeakKerberos = $false;
+    foreach($DC in $ADcomputers){
+        if( $DC.KerberosEncryptionType.Value.ToString().Contains('RC4') -or $DC.KerberosEncryptionType.Value.ToString().Contains('DES') ){
+            $WeakKerberos = $true;
+            Add-Content -Path "$outputdir\dcs_weak_kerberos_syphersuite.txt" -Value "$($DC.DNSHostName) $($dc.KerberosEncryptionType.Value.ToString())";
+        }
+    }
+    Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!"; 
+}
+
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
@@ -540,11 +658,11 @@ if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\ad
 Write-Nessus-Header
 write-host "[+] Outputting to $outputdir"
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-PrivelegedGroupMembership ; Get-MachineAccountQuota; Get-GPOEnum ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivelegedGroupMembership ; Get-MachineAccountQuota; Get-GPOEnum ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
-if ($ntds -Or $all) { $running=$true; Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit }
+if ($ntds) { $running=$true; Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit }
 if ($oldboxes -Or $all) { $running=$true; Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes }
 if ($gpo -Or $all) { $running=$true; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS }
 if ($ouperms -Or $all) { $running=$true; Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms }
