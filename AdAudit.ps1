@@ -35,7 +35,6 @@ ToDo:
 param (
   [switch]$hostdetails = $false,
   [switch]$domainaudit = $false,
-  [switch]$loopgpo = $false,
   [switch]$trusts = $false,
   [switch]$accounts = $false,
   [switch]$passwordpolicy = $false,
@@ -661,7 +660,7 @@ function Get-DCEval{#Basic validation of all DCs in forest
         if( ( $ads | ? OperatingSystem -Match '2016' ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2016";
             $ads | ? OperatingSystem -Match '2016' | %{Write-Both "            [-] $($_.Name)"};
-        }    
+        }
     }
     #Valide DCs hotfix level
     if( ( $ads.OperatingSystemHotfix | select -Unique ).count -eq 1 -or ( $ads.OperatingSystemHotfix | select -Unique ) -eq $null ){
@@ -689,7 +688,7 @@ function Get-DCEval{#Basic validation of all DCs in forest
     foreach($Site in $Forest.Sites){
         if(($ads | ? Site -eq $Site.Name | ? IsGlobalCatalog -eq True) -eq $null) {$SitesWithNoGC = $true;Add-Content -Path "$outputdir\sites_no_gc.txt" -Value "$($Site.Name)"; }
     }
-    Write-Both "    [!] You have sites with no Global Catalog!"; 
+    Write-Both "    [!] You have sites with no Global Catalog!";
     #Does one DC holds all FSMO
     if(($ADs | ? OperationMasterRoles -ne $null | measure).count -eq 1){
         Write-Both "    [!] DC $($ADs | ? OperationMasterRoles -ne $null | select -ExpandProperty hostname) holds all FSMO roles!";
@@ -703,7 +702,7 @@ function Get-DCEval{#Basic validation of all DCs in forest
             Add-Content -Path "$outputdir\dcs_weak_kerberos_syphersuite.txt" -Value "$($DC.DNSHostName) $($dc.KerberosEncryptionType.Value.ToString())";
         }
     }
-    Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!"; 
+    Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!";
 }
 function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controllers Policy for default unsecure and excessive options
     $ExcessiveDCInteractiveLogon = $false;
@@ -841,14 +840,13 @@ if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\ad
 Write-Nessus-Header
 write-host "[+] Outputting to $outputdir"
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivelegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
-if ($loopgpo -Or $all) { $running=$true; Write-Both "[*] GPO Enumeration" ; Get-GPOEnum }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivelegedGroupMembership ; Get-DCEval ; Get-PrivelegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
 if ($ntds -Or $all) { $running=$true; Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit }
 if ($oldboxes -Or $all) { $running=$true; Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes }
-if ($gpo -Or $all) { $running=$true; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS }
+if ($gpo -Or $all) { $running=$true; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS; Get-GPOEnum }
 if ($ouperms -Or $all) { $running=$true; Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms }
 if ($laps -Or $all) { $running=$true; Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus }
 if ($authpolsilos -Or $all) { $running=$true; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
