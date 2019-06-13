@@ -35,6 +35,7 @@ ToDo:
 param (
   [switch]$hostdetails = $false,
   [switch]$domainaudit = $false,
+  [switch]$loopgpo = $false,
   [switch]$trusts = $false,
   [switch]$accounts = $false,
   [switch]$passwordpolicy = $false,
@@ -420,6 +421,406 @@ function Get-FunctionalLevel{# Gets the functional level for domain and forest
     if ($ForestLevel -eq "Windows2012R2Forest" -and [single](Get-WinVersion) -gt 6.3){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
     if ($ForestLevel -eq "Windows2016Forest" -and [single](Get-WinVersion) -gt 10.0){Write-Both "    [!] ForestLevel is reduced for backwards compatibility to $ForestLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "ForestLevel is reduced for backwards compatibility to $ForestLevel"}
 }
+function Get-GPOEnum{#Loops GPOs for some important domain-wide settings
+    $AllowedJoin = @();
+    $HardenNTLM = @();
+    $DenyNTLM = @();
+    $AuditNTLM = @();
+    $NTLMAuthExceptions = @();
+    $EncryptionTypesNotConfigured = $true;
+    $AdminLocalLogonAllowed = $true;
+    $AdminRPDLogonAllowed = $true;
+    $AdminNetworkLogonAllowed = $true;
+    $AllGPOs = Get-GPO -All | sort DisplayName;
+    foreach ($GPO in $AllGPOs){
+        $GPOreport = Get-GPOReport -Guid $GPO.id -ReportType Xml;
+        #Look for GPO that allows join PC to domain
+        $permissionindex = $GPOreport.IndexOf('<q1:Name>SeMachineAccountPrivilege</q1:Name>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeMachineAccountPrivilege').member) ){
+                $obj = New-Object -TypeName psobject;
+                $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+                $obj | Add-Member -MemberType NoteProperty -Name SID -Value $member.sid.'#text';
+                $obj | Add-Member -MemberType NoteProperty -Name Name -Value $member.name.'#text';
+
+                $AllowedJoin += $obj;
+            }
+        }
+        #Look for GPO that hardens NTLM
+        $permissionindex = $GPOreport.IndexOf('NoLMHash</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            $value = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'NoLMHash';
+            $obj = New-Object -TypeName psobject;
+            $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+            $obj | Add-Member -MemberType NoteProperty -Name Value -Value "NoLMHash $($value.Display.DisplayBoolean)";
+            $HardenNTLM += $obj;
+        }
+        $permissionindex = $GPOreport.IndexOf('LmCompatibilityLevel</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            $value = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'LmCompatibilityLevel';
+            $obj = New-Object -TypeName psobject;
+            $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+            $obj | Add-Member -MemberType NoteProperty -Name Value -Value "LmCompatibilityLevel $($value.Display.DisplayString)";
+            $HardenNTLM += $obj;
+        }
+        #Look for GPO that denies NTLM
+        $permissionindex = $GPOreport.IndexOf('RestrictNTLMInDomain</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            $value = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'RestrictNTLMInDomain';
+            $obj = New-Object -TypeName psobject;
+            $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+            $obj | Add-Member -MemberType NoteProperty -Name Value -Value "RestrictNTLMInDomain $($value.Display.DisplayString)";
+            $DenyNTLM += $obj;
+        }
+        #Look for GPO that audits NTLM
+        $permissionindex = $GPOreport.IndexOf('AuditNTLMInDomain</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            $value = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'AuditNTLMInDomain';
+            $obj = New-Object -TypeName psobject;
+            $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+            $obj | Add-Member -MemberType NoteProperty -Name Value -Value "AuditNTLMInDomain $($value.Display.DisplayString)";
+            $AuditNTLM += $obj;
+        }
+        $permissionindex = $GPOreport.IndexOf('AuditReceivingNTLMTraffic</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            $value = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'AuditReceivingNTLMTraffic';
+            $obj = New-Object -TypeName psobject;
+            $obj | Add-Member -MemberType NoteProperty -Name GPO -Value $GPO.DisplayName;
+            $obj | Add-Member -MemberType NoteProperty -Name Value -Value "AuditReceivingNTLMTraffic $($value.Display.DisplayString)";
+            $AuditNTLM += $obj;
+        }
+        #Look for GPO that allows NTLM exclusions
+        $permissionindex = $GPOreport.IndexOf('DCAllowedNTLMServers</q1:KeyName>');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            foreach ($member in (($xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions | ? keyname -Match 'DCAllowedNTLMServers').SettingStrings.Value) ){
+                $NTLMAuthExceptions += $member;
+            }
+        }
+        #Validate Kerberos Encryption algorythm
+        $permissionindex = $GPOreport.IndexOf('MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters\SupportedEncryptionTypes');
+        if($permissionindex -gt 0){
+            $EncryptionTypesNotConfigured = $false;
+            $xmlreport = [xml]$GPOreport;
+            $EncryptionTypes = $xmlreport.gpo.Computer.ExtensionData.Extension.SecurityOptions.Display.DisplayFields.Field;
+            if(($EncryptionTypes | ? name -eq 'DES_CBC_CRC' | select -ExpandProperty value) -eq 'true'){
+                Write-Both "    [!] GPO [$($GPO.DisplayName)] enabled DES_CBC_CRC for Kerberos!";
+            }elseif(($EncryptionTypes | ? name -eq 'DES_CBC_MD5' | select -ExpandProperty value) -eq 'true'){
+                Write-Both "    [!] GPO [$($GPO.DisplayName)] enabled DES_CBC_MD5 for Kerberos!";
+            }elseif(($EncryptionTypes | ? name -eq 'RC4_HMAC_MD5' | select -ExpandProperty value) -eq 'true'){
+                Write-Both "    [!] GPO [$($GPO.DisplayName)] enabled RC4_HMAC_MD5 for Kerberos!";
+            }elseif(($EncryptionTypes | ? name -eq 'AES128_HMAC_SHA1' | select -ExpandProperty value) -eq 'false'){
+                Write-Both "    [!] AES128_HMAC_SHA1 not enabled for Kerberos!";
+            }elseif(($EncryptionTypes | ? name -eq 'AES256_HMAC_SHA1' | select -ExpandProperty value) -eq 'false'){
+                Write-Both "    [!] AES256_HMAC_SHA1 not enabled for Kerberos!";
+            }elseif(($EncryptionTypes | ? name -eq 'Future encryption types' | select -ExpandProperty value) -eq 'false'){
+                Write-Both "    [!] Future encryption types not enabled for Kerberos!";
+            }
+        }
+        #Validates Admins local logon restrictions
+        $permissionindex = $GPOreport.IndexOf('SeDenyInteractiveLogonRight');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeDenyInteractiveLogonRight').member)){
+                if($member.name.'#text' -match 'Schema Admins' -or $member.name.'#text' -match 'Domain Admins' -or $member.name.'#text' -match 'Enterprise Admins'){
+                    $AdminLocalLogonAllowed = $false;
+                    Add-Content -Path "$outputdir\admin_logon_restrictios.txt" -Value "$($GPO.DisplayName) SeDenyInteractiveLogonRight $($member.name.'#text')";
+                }
+            }
+        }
+        #Validates Admins RDP logon restrictions
+        $permissionindex = $GPOreport.IndexOf('SeDenyRemoteInteractiveLogonRight');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeDenyRemoteInteractiveLogonRight').member)){
+                if($member.name.'#text' -match 'Schema Admins' -or $member.name.'#text' -match 'Domain Admins' -or $member.name.'#text' -match 'Enterprise Admins'){
+                    $AdminRPDLogonAllowed = $false;
+                    Add-Content -Path "$outputdir\admin_logon_restrictios.txt" -Value "$($GPO.DisplayName) SeDenyRemoteInteractiveLogonRight $($member.name.'#text')";
+                }
+            }
+        }
+        #Validates Admins network logon restrictions
+        $permissionindex = $GPOreport.IndexOf('SeDenyNetworkLogonRight');
+        if($permissionindex -gt 0){
+            $xmlreport = [xml]$GPOreport;
+            foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeDenyNetworkLogonRight').member)){
+                if($member.name.'#text' -match 'Schema Admins' -or $member.name.'#text' -match 'Domain Admins' -or $member.name.'#text' -match 'Enterprise Admins'){
+                    $AdminNetworkLogonAllowed = $false;
+                    Add-Content -Path "$outputdir\admin_logon_restrictios.txt" -Value "$($GPO.DisplayName) SeDenyNetworkLogonRight $($member.name.'#text')";
+                }
+            }
+        }
+    }
+    #Output for join PC to domain
+    foreach($record in $AllowedJoin){
+        Write-Both "    [+] GPO [$($record.GPO)] allows [$($record.Name)] to join computers to domain";
+    }
+    #Output for Admins local logon restrictions
+    if($AdminLocalLogonAllowed){
+        Write-Both "    [!] No GPO restricts Domain, Schema and Enterprise local logon across domain!!!";
+    }
+    #Output for Admins RDP logon restrictions
+    if($AdminRPDLogonAllowed){
+        Write-Both "    [!] No GPO restricts Domain, Schema and Enterprise RDP logon across domain!!!";
+    }
+    #Output for Admins network logon restrictions
+    if($AdminNetworkLogonAllowed){
+        Write-Both "    [!] No GPO restricts Domain, Schema and Enterprise network logon across domain!!!";
+    }
+    #Output for Validate Kerberos Encryption algorythm
+    if($EncryptionTypesNotConfigured){
+        Write-Both "    [!] RC4_HMAC_MD5 enabled for Kerberos across domain!!!";
+    }
+    #Output for deny NTLM
+    if($DenyNTLM.count -eq 0){
+        if($HardenNTLM.count -eq 0){
+            Write-Both "    [!] No GPO denies NTLM authentication!";
+            Write-Both "    [!] No GPO explicitely restricts LM or NTLMv1!";
+        }else{
+            Write-Both "    [+] NTLM authentication hardening implemented, but NTLM not denied";
+            foreach($record in $HardenNTLM){
+                Write-Both "        [-] $($record.value)";
+                Add-Content -Path "$outputdir\ntlm_restrictions.txt" -Value "NTLM restricted by GPO [$($record.gpo)] with value [$($record.value)]";
+            }
+        }
+    }else{
+        foreach($record in $DenyNTLM){
+            Add-Content -Path "$outputdir\ntlm_restrictions.txt" -Value "NTLM restricted by GPO [$($record.gpo)] with value [$($record.value)]";
+        }
+    }
+    #Output for NTLM exceptions
+    if($NTLMAuthExceptions.count -ne 0){
+        foreach($record in $NTLMAuthExceptions){
+            Add-Content -Path "$outputdir\ntlm_restrictions.txt" -Value "NTLM auth exceptions $($record)";
+        }
+    }
+    #Output for NTLM audit
+    if($AuditNTLM.count -eq 0){
+        Write-Both "    [!] No GPO enables NTLM audit authentication!";
+    }else{
+        foreach($record in $DenyNTLM){
+            Add-Content -Path "$outputdir\ntlm_restrictions.txt" -Value "NTLM audit GPO [$($record.gpo)] with value [$($record.value)]";
+        }
+    }
+}
+function Get-PrivelegedGroupMembership{#List Domain Admins, Enterprise Admins and Schema Admins members
+    $SchemaMemebers = Get-ADGroup 'Schema Admins' | Get-ADGroupMember;
+    $EnterpriseMemebers = Get-ADGroup 'Enterprise Admins' | Get-ADGroupMember;
+    $DomainAdminsMemebers = Get-ADGroup 'Domain Admins' | Get-ADGroupMember;
+    if(($SchemaMemebers | measure).count -ne 0){
+            Write-Both "    [!] Schema Admins not empty!!!";
+        foreach($member in $SchemaMemebers){
+            Add-Content -Path "$outputdir\schema_admins.txt" -Value "$($member.objectClass) $($member.name)";
+        }
+    }
+    if(($EnterpriseMemebers | measure).count -ne 0){
+            Write-Both "    [!] Enterprise Admins not empty!!!";
+        foreach($member in $EnterpriseMemebers){
+            Add-Content -Path "$outputdir\enterprise_admins.txt" -Value "$($member.objectClass) $($member.name)";
+        }
+    }
+    foreach($member in $DomainAdminsMemebers){
+        Add-Content -Path "$outputdir\domain_admins.txt" -Value "$($member.objectClass) $($member.name)";
+    }
+}
+function Get-DCEval{#Basic validation of all DCs in forest
+    #Collect all DCs in forest
+    $Forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest();
+    $ADs = $Forest.Sites.Servers | %{ Get-ADDomainController $_.Name };
+    #Valide OS version of DCs
+    if( ( $ads.operatingsystem | select -Unique ).count -eq 1 ){
+        Write-Both "    [+] All DCs are the same OS version of $($ads.operatingsystem | select -Unique)";
+    }else{
+        Write-Both "    [!] Operating system differs across DCs!!!";
+        if( ( $ads | ? OperatingSystem -Match '2003' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2003";
+            $ads | ? OperatingSystem -Match '2003' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2008 !(R2)' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2008";
+            $ads | ? OperatingSystem -Match '2008 !(R2)' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2008 R2' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2008 R2";
+            $ads | ? OperatingSystem -Match '2008 R2' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2012 !(R2)' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2012";
+            $ads | ? OperatingSystem -Match '2012 !(R2)' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2012 R2' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2012 R2";
+            $ads | ? OperatingSystem -Match '2012 R2' | %{Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | ? OperatingSystem -Match '2016' ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2016";
+            $ads | ? OperatingSystem -Match '2016' | %{Write-Both "            [-] $($_.Name)"};
+        }    
+    }
+    #Valide DCs hotfix level
+    if( ( $ads.OperatingSystemHotfix | select -Unique ).count -eq 1 -or ( $ads.OperatingSystemHotfix | select -Unique ) -eq $null ){
+        Write-Both "    [+] All DCs have the same hotfix of [$($ads.OperatingSystemHotfix | select -Unique)]";
+    }else{
+        Write-Both "    [!] Hotfix level differs across DCs!!!";
+        $ads | %{Write-Both "        [-] DC $($_.Name) hotfix [$($ads.OperatingSystemHotfix)]"};
+    }
+    #Valide DCs Service Pack level
+    if( ( $ads.OperatingSystemServicePack | select -Unique ).count -eq 1 -or ( $ads.OperatingSystemServicePack | select -Unique ) -eq $null){
+        Write-Both "    [+] All DCs have the same Service Pack of [$($ads.OperatingSystemServicePack | select -Unique)]";
+    }else{
+        Write-Both "    [!] Service Pack level differs across DCs!!!";
+        $ads | %{Write-Both "        [-] DC $($_.Name) Service Pack [$($ads.OperatingSystemServicePack)]"};
+    }
+    #Valide DCs OS Version
+    if( ( $ads.OperatingSystemVersion | select -Unique ).count -eq 1 -or ( $ads.OperatingSystemVersion | select -Unique ) -eq $null){
+        Write-Both "    [+] All DCs have the same OS Version of [$($ads.OperatingSystemVersion | select -Unique)]";
+    }else{
+        Write-Both "    [!] OS Version differs across DCs!!!";
+        $ads | %{Write-Both "        [-] DC $($_.Name) OS Version [$($ads.OperatingSystemVersion)]"};
+    }
+    #List sites without GC
+    $SitesWithNoGC = $false;
+    foreach($Site in $Forest.Sites){
+        if(($ads | ? Site -eq $Site.Name | ? IsGlobalCatalog -eq True) -eq $null) {$SitesWithNoGC = $true;Add-Content -Path "$outputdir\sites_no_gc.txt" -Value "$($Site.Name)"; }
+    }
+    Write-Both "    [!] You have sites with no Global Catalog!"; 
+    #Does one DC holds all FSMO
+    if(($ADs | ? OperationMasterRoles -ne $null | measure).count -eq 1){
+        Write-Both "    [!] DC $($ADs | ? OperationMasterRoles -ne $null | select -ExpandProperty hostname) holds all FSMO roles!";
+    }
+    #DCs with weak Kerberos algorythm
+    $ADcomputers = $ads | %{Get-ADComputer $_.Name -Properties KerberosEncryptionType};
+    $WeakKerberos = $false;
+    foreach($DC in $ADcomputers){
+        if( $DC.KerberosEncryptionType.Value.ToString().Contains('RC4') -or $DC.KerberosEncryptionType.Value.ToString().Contains('DES') ){
+            $WeakKerberos = $true;
+            Add-Content -Path "$outputdir\dcs_weak_kerberos_syphersuite.txt" -Value "$($DC.DNSHostName) $($dc.KerberosEncryptionType.Value.ToString())";
+        }
+    }
+    Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!"; 
+}
+function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controllers Policy for default unsecure and excessive options
+    $ExcessiveDCInteractiveLogon = $false;
+    $ExcessiveDCBackupPermissions = $false;
+    $ExcessiveDCRestorePermissions = $false;
+    $ExcessiveDCDriverPermissions = $false;
+    $ExcessiveDCLocalShutdownPermissions = $false;
+    $ExcessiveDCRemoteShutdownPermissions = $false;
+    $ExcessiveDCTimePermissions = $false;
+    $ExcessiveDCBatchLogonPermissions = $false;
+    $ExcessiveDCRDPLogonPermissions = $false;
+    $GPO = Get-GPO 'Default Domain Controllers Policy';
+    $GPOreport = Get-GPOReport -Guid $GPO.id -ReportType Xml;
+    #Interactive local logon
+    $permissionindex = $GPOreport.IndexOf('SeInteractiveLogonRight');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeInteractiveLogonRight').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators' -and $member.name.'#text' -ne 'NT AUTHORITY\ENTERPRISE DOMAIN CONTROLLERS'){
+                $ExcessiveDCInteractiveLogon = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeInteractiveLogonRight $($member.name.'#text')";
+            }
+        }
+    }
+    #batch logon
+    $permissionindex = $GPOreport.IndexOf('SeBatchLogonRight');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeBatchLogonRight').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators'){
+                $ExcessiveDCBatchLogonPermissions = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeBatchLogonRight $($member.name.'#text')";
+            }
+        }
+    }
+    #RDP logon
+    $permissionindex = $GPOreport.IndexOf('SeInteractiveLogonRight');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeInteractiveLogonRight').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators' -and $member.name.'#text' -ne 'NT AUTHORITY\ENTERPRISE DOMAIN CONTROLLERS'){
+                $ExcessiveDCRDPLogonPermissions = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeInteractiveLogonRight $($member.name.'#text')";
+            }
+        }
+    }
+    #backup
+    $permissionindex = $GPOreport.IndexOf('SeBackupPrivilege');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeBackupPrivilege').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators'){
+                $ExcessiveDCBackupPermissions = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeBackupPrivilege $($member.name.'#text')";
+            }
+        }
+    }
+    #restore
+    $permissionindex = $GPOreport.IndexOf('SeRestorePrivilege');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeRestorePrivilege').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators'){
+                $ExcessiveDCRestorePermissions = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeRestorePrivilege $($member.name.'#text')";
+            }
+        }
+    }
+    #load driver
+    $permissionindex = $GPOreport.IndexOf('SeLoadDriverPrivilege');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeLoadDriverPrivilege').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators'){
+                $ExcessiveDCDriverPermissions = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeLoadDriverPrivilege $($member.name.'#text')";
+            }
+        }
+    }
+    #local shutdown
+    $permissionindex = $GPOreport.IndexOf('SeShutdownPrivilege');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeShutdownPrivilege').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators'){
+                $ExcessiveDCLocalShutdownPermissions = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeShutdownPrivilege $($member.name.'#text')";
+            }
+        }
+    }
+    #remote shutdown
+    $permissionindex = $GPOreport.IndexOf('SeRemoteShutdownPrivilege');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeRemoteShutdownPrivilege').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators'){
+                $ExcessiveDCRemoteShutdownPermissions = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeRemoteShutdownPrivilege $($member.name.'#text')";
+            }
+        }
+    }
+    #change time
+    $permissionindex = $GPOreport.IndexOf('SeSystemTimePrivilege');
+    if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
+        $xmlreport = [xml]$GPOreport;
+        foreach($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | ? name -eq 'SeSystemTimePrivilege').member)){
+            if($member.name.'#text' -ne 'BUILTIN\Administrators' -and $member.name.'#text' -ne 'NT AUTHORITY\LOCAL SERVICE'){
+                $ExcessiveDCTimePermissions = $true;
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeSystemTimePrivilege $($member.name.'#text')";
+            }
+        }
+    }
+    #Output for Default Domain Controllers Policy
+    if($ExcessiveDCInteractiveLogon -or $ExcessiveDCBackupPermissions -or $ExcessiveDCRestorePermissions -or $ExcessiveDCDriverPermissions -or $ExcessiveDCLocalShutdownPermissions -or $ExcessiveDCRemoteShutdownPermissions -or $ExcessiveDCTimePermissions -or $ExcessiveDCBatchLogonPermissions -or $ExcessiveDCRDPLogonPermissions){
+        Write-Both "    [!] Excessive permissions in Default Domain Controllers Policy detected!";
+    }
+}
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = get-date
@@ -440,7 +841,8 @@ if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\ad
 Write-Nessus-Header
 write-host "[+] Outputting to $outputdir"
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-MachineAccountQuota ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivelegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
+if ($loopgpo -Or $all) { $running=$true; Write-Both "[*] GPO Enumeration" ; Get-GPOEnum }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-AdminSDHolders; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
