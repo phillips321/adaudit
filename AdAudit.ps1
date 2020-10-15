@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v4.2 - Bug fix on cpassword count
     v4.1 - Loads of fixes. Works with Powershellv2 again now, filtered out disabled accounts, improved domain trusts checking, ouperms improvements and filtering, check for w2k, fixed typos/spelling and various other fixes.
     v4.0 - Added XML output for import to CheckSecCanopy
     v3.5 - Added KB more references for internal use
@@ -47,7 +48,7 @@ param (
   [switch]$authpolsilos = $false,
   [switch]$all = $false
 )
-$versionnum = "v4.1"
+$versionnum = "v4.2"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 function Write-Nessus-Header(){#creates nessus XML file header
@@ -120,7 +121,7 @@ function Get-AdminSDHolders{#lists users and groups with AdminSDHolder set
     }
 }
 function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
-$DomainLevel = (Get-ADDomain).domainMode
+    $DomainLevel = (Get-ADDomain).domainMode
     if ($DomainLevel -eq "Windows2012Domain" -or $DomainLevel -eq "Windows2012R2Domain" -or $DomainLevel -eq "Windows2016Domain"){#Checking for 2012 or above domain functional level
         $count = 0
         $protectedaccounts = (Get-ADGroup "Protected Users" -Properties members).Members
@@ -272,8 +273,8 @@ function Get-NTDSdit{#dumps NTDS.dit, SYSTEM and SAM for password cracking
 }
 function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Get-GPPPassword.ps1)
     $XMLFiles = Get-ChildItem -Path "\\$Env:USERDNSDOMAIN\SYSVOL" -Recurse -ErrorAction SilentlyContinue -Include 'Groups.xml','Services.xml','Scheduledtasks.xml','DataSources.xml','Printers.xml','Drives.xml'
+    $count = 0
     if ($XMLFiles){
-        $count = 0
         $progresscount = 0
         $totalcount = $XMLFiles.count
         foreach ($File in $XMLFiles) {
@@ -878,8 +879,8 @@ Write-Nessus-Footer
 #Dirty fix for .nessus characters (will do this properly or as a function later. Will need more characters adding here...)
 $originalnessusoutput = Get-Content $outputdir\adaudit.nessus
 $nessusoutput = $originalnessusoutput -Replace "&", "&amp;"
-$nessusoutput = $nessusoutput -Replace "`“", "&quot;"
-$nessusoutput = $nessusoutput -Replace "ü", "u"
+$nessusoutput = $nessusoutput -Replace "`Â“", "&quot;"
+$nessusoutput = $nessusoutput -Replace "Ã¼", "u"
 $nessusoutput | Out-File $outputdir\adaudit-replaced.nessus
 
 $endtime = get-date
