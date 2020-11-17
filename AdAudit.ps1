@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v4.3 - Temp fix with nessus output
     v4.2 - Bug fix on cpassword count
     v4.1 - Loads of fixes. Works with Powershellv2 again now, filtered out disabled accounts, improved domain trusts checking, ouperms improvements and filtering, check for w2k, fixed typos/spelling and various other fixes.
     v4.0 - Added XML output for import to CheckSecCanopy
@@ -48,7 +49,7 @@ param (
   [switch]$authpolsilos = $false,
   [switch]$all = $false
 )
-$versionnum = "v4.2"
+$versionnum = "v4.3"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 function Write-Nessus-Header(){#creates nessus XML file header
@@ -876,12 +877,12 @@ if (!$running) { Write-Both "[!] No arguments selected;"
 }
 Write-Nessus-Footer
 
-#Dirty fix for .nessus characters (will do this properly or as a function later. Will need more characters adding here...)
-$originalnessusoutput = Get-Content $outputdir\adaudit.nessus
-$nessusoutput = $originalnessusoutput -Replace "&", "&amp;"
-$nessusoutput = $nessusoutput -Replace "`", "&quot;"
-$nessusoutput = $nessusoutput -Replace "ü", "u"
-$nessusoutput | Out-File $outputdir\adaudit-replaced.nessus
+##Dirty fix for .nessus characters (will do this properly or as a function later. Will need more characters adding here...)
+#$originalnessusoutput = Get-Content $outputdir\adaudit.nessus
+#$nessusoutput = $originalnessusoutput -Replace "&", "&amp;"
+#$nessusoutput = $nessusoutput -Replace "`", "&quot;"
+#$nessusoutput = $nessusoutput -Replace "ü", "u"
+#$nessusoutput | Out-File $outputdir\adaudit-replaced.nessus
 
 $endtime = get-date
 Write-Both "[*] Script end time $endtime"
