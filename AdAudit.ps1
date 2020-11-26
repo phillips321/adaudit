@@ -249,7 +249,7 @@ function Get-GPOtoFile{#oututs complete GPO report
 }
 function Get-GPOsPerOU{#Lists all OUs and which GPOs apply to them
     $count = 0
-    $ousgpos = Get-ADOrganizationalUnit -Filter *
+    $ousgpos = @(Get-ADOrganizationalUnit -Filter *)
     $totalcount = $ousgpos.count
     foreach ($ouobject in $ousgpos){
         Write-Progress -Activity "Identifying which GPOs apply to which OUs..." -Status "Currently identifed $count OUs" -PercentComplete ($count / $totalcount*100)
