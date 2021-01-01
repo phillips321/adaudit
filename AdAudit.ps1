@@ -73,7 +73,7 @@ function Get-OUPerms{#Check for non-standard perms for authenticated users, doma
     $count = 0
     $progresscount = 0
     $objects = (Get-ADObject -Filter *)
-    $totalcount = $objects.count
+    $totalcount = ($objects | Measure-Object | Select-Object Count).count
     foreach ($object in $objects) {
         $progresscount++
         Write-Progress -Activity "Searching for non standard permissions for authenticated users..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
@@ -103,7 +103,7 @@ Function Get-PrivilegedGroupAccounts{#lists users in Admininstrators, DA and EA 
     $privilegedusers += Get-ADGroupMember "enterprise admins" -Recursive
     $privusersunique = $privilegedusers | Sort-Object -Unique
     $count = 0
-    $totalcount = $privilegedusers.count
+    $totalcount = ($privilegedusers | Measure-Object | Select-Object Count).count
 
     ForEach ($account in $privusersunique){
         Write-Progress -Activity "Searching for users who are in privileged groups..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
@@ -121,7 +121,7 @@ function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and 
     if ($DomainLevel -eq "Windows2012Domain" -or $DomainLevel -eq "Windows2012R2Domain" -or $DomainLevel -eq "Windows2016Domain"){#Checking for 2012 or above domain functional level
         $count = 0
         $protectedaccounts = (Get-ADGroup "Protected Users" -Properties members).Members
-        $totalcount = $protectedaccounts.count
+        $totalcount = ($protectedaccounts | Measure-Object | Select-Object Count).count
         ForEach ($members in $protectedaccounts){
             Write-Progress -Activity "Searching for ptoected users..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
             $account = Get-ADObject $members -Properties samaccountname
@@ -221,7 +221,7 @@ function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
     $count = 0
     $DaysAgo=(Get-Date).AddDays(-90)
     $accountsoldpasswords = get-aduser -filter {PwdLastSet -lt $DaysAgo -and enabled -eq "true"} -properties passwordlastset
-    $totalcount= $accountsoldpasswords.count
+    $totalcount= ($accountsoldpasswords | Measure-Object | Select-Object Count).count
     ForEach ($account in $accountsoldpasswords){
         Write-Progress -Activity "Searching for passwords older than 90days..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         if ($account.PasswordLastSet){$datelastchanged = $account.PasswordLastSet} else {$datelastchanged = "Never"}
@@ -250,7 +250,7 @@ function Get-GPOtoFile{#oututs complete GPO report
 function Get-GPOsPerOU{#Lists all OUs and which GPOs apply to them
     $count = 0
     $ousgpos = @(Get-ADOrganizationalUnit -Filter *)
-    $totalcount = $ousgpos.count
+    $totalcount = ($ousgpos | Measure-Object | Select-Object Count).count
     foreach ($ouobject in $ousgpos){
         Write-Progress -Activity "Identifying which GPOs apply to which OUs..." -Status "Currently identifed $count OUs" -PercentComplete ($count / $totalcount*100)
         $combinedgpos = ($(((Get-GPInheritance -Target $ouobject).InheritedGpoLinks) | select DisplayName) | ForEach-Object { $_.DisplayName }) -join ','
@@ -272,7 +272,7 @@ function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.co
     $count = 0
     if ($XMLFiles){
         $progresscount = 0
-        $totalcount = $XMLFiles.count
+        $totalcount = ($XMLFiles | Measure-Object | Select-Object Count).count
         foreach ($File in $XMLFiles) {
             $progresscount++
             Write-Progress -Activity "Searching SYSVOL *.xmls for cpassword..." -Status "Currently searched through $count" -PercentComplete ($progresscount / $totalcount*100)
@@ -301,7 +301,7 @@ function Get-InactiveAccounts{#lists accounts not used in past 180 days plus som
     $count = 0
     $progresscount = 0
     $inactiveaccounts = Search-ADaccount -AccountInactive -Timespan (New-TimeSpan -Days 180) -UsersOnly | Where-Object {$_.Enabled -eq $true}
-    $totalcount = $inactiveaccounts.count
+    $totalcount = ($inactiveaccounts | Measure-Object | Select-Object Count).count
     ForEach ($account in $inactiveaccounts){
         $progresscount++
         Write-Progress -Activity "Searching for inactive users..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
@@ -336,7 +336,7 @@ function Get-AdminAccountChecks{# checks if Administrator account has been renam
 function Get-DisabledAccounts{#lists disabled accounts
     $disabledaccounts = Search-ADaccount -AccountDisabled -UsersOnly
     $count = 0
-    $totalcount = $disabledaccounts.count
+    $totalcount = ($disabledaccounts | Measure-Object | Select-Object Count).count
     ForEach ($account in $disabledaccounts){
         Write-Progress -Activity "Searching for disabled users..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
@@ -351,7 +351,7 @@ function Get-DisabledAccounts{#lists disabled accounts
 function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
     $count = 0
     $nonexpiringpasswords = Search-ADAccount -PasswordNeverExpires -UsersOnly | Where-Object {$_.Enabled -eq $true}
-    $totalcount = $nonexpiringpasswords.count
+    $totalcount = ($nonexpiringpasswords | Measure-Object | Select-Object Count).count
     ForEach ($account in $nonexpiringpasswords){
         Write-Progress -Activity "Searching for users with passwords that dont expire..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         Add-Content -Path "$outputdir\accounts_passdontexpire.txt" -Value "$($account.SamAccountName) ($($account.Name))"
@@ -365,7 +365,7 @@ function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
 function Get-OldBoxes{#lists server 2000/2003/XP machines
     $count = 0
     $oldboxes = Get-ADComputer -Filter {OperatingSystem -Like "*2003*" -and Enabled -eq "true" -or OperatingSystem -Like "*XP*" -and Enabled -eq "true" -or OperatingSystem -Like "*2000*" -and Enabled -eq "true"} -Property *
-    $totalcount = $oldboxes.count
+    $totalcount = ($oldboxes | Measure-Object | Select-Object Count).count
     ForEach ($machine in $oldboxes){
         Write-Progress -Activity "Searching for 2003/XP devices joined to the domain..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
         Add-Content -Path "$outputdir\machines_old.txt" -Value "$($machine.Name), $($machine.OperatingSystem), $($machine.OperatingSystemServicePack), $($machine.OperatingSystemVersio), $($machine.IPv4Address)"
@@ -380,7 +380,7 @@ function Get-DCsNotOwnedByDA {#searches for DC objects not owned by the Domain A
     $count = 0
     $progresscount = 0
     $domaincontrollers = Get-ADComputer -Filter {PrimaryGroupID -eq 516 -or PrimaryGroupID -eq 521} -Property *
-    $totalcount = $domaincontrollers.count
+    $totalcount = ($domaincontrollers | Measure-Object | Select-Object Count).count
     if ($totalcount -gt 0){
         ForEach ($machine in $domaincontrollers){
             $progresscount++
