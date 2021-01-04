@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v4.5 - PR to resolve count issue when count = 1
     v4.4 - Reinstated nessus fix and put output in a list for findings, changed Get-AdminSDHolders with Get-PrivilegedGroupAccounts
     v4.3 - Temp fix with nessus output
     v4.2 - Bug fix on cpassword count
@@ -50,7 +51,7 @@ param (
   [switch]$authpolsilos = $false,
   [switch]$all = $false
 )
-$versionnum = "v4.3"
+$versionnum = "v4.5"
 function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"}
 function Write-Nessus-Header(){#creates nessus XML file header
