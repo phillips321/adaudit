@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v4.7 - Added powershel-v2 suport and fixed array issue
     v4.6 - Fixed potential division by zero
     v4.5 - PR to resolve count issue when count = 1
     v4.4 - Reinstated nessus fix and put output in a list for findings, changed Get-AdminSDHolders with Get-PrivilegedGroupAccounts
@@ -85,7 +86,7 @@ function Get-OUPerms{#Check for non-standard perms for authenticated users, doma
     }
     if ($count -gt 0){
         Write-Both "    [!] Issue identified, see $outputdir\ou_permissions.txt"
-        Write-Nessus-Finding "OUPermissions" "KB551" (Get-Content -Raw -Path "$outputdir\ou_permissions.txt")
+        Write-Nessus-Finding "OUPermissions" "KB551" ([System.IO.File]::ReadAllText("$outputdir\ou_permissions.txt"))
     }
 }
 function Get-LAPSStatus{#Check for presence of LAPS in domain
@@ -101,7 +102,8 @@ function Get-LAPSStatus{#Check for presence of LAPS in domain
 }
 
 Function Get-PrivilegedGroupAccounts{#lists users in Admininstrators, DA and EA groups
-    $privilegedusers = Get-ADGroupMember administrators -Recursive
+    [array]$privilegedusersarray = @()
+    $privilegedusers += Get-ADGroupMember "administrators" -Recursive
     $privilegedusers += Get-ADGroupMember "domain admins" -Recursive
     $privilegedusers += Get-ADGroupMember "enterprise admins" -Recursive
     $privusersunique = $privilegedusers | Sort-Object -Unique
@@ -115,7 +117,7 @@ Function Get-PrivilegedGroupAccounts{#lists users in Admininstrators, DA and EA 
     }
     if ($count -gt 0){
         Write-Both "    [!] There are $count accounts in privileged groups, see accounts_userPrivileged.txt (KB426)"
-        Write-Nessus-Finding "AdminSDHolders" "KB426" (Get-Content -Raw -Path "$outputdir\accounts_userPrivileged.txt")
+        Write-Nessus-Finding "AdminSDHolders" "KB426" ([System.IO.File]::ReadAllText("$outputdir\accounts_userPrivileged.txt"))
     }
 }
 
@@ -134,7 +136,7 @@ function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and 
         }
         if ($count -gt 0){
             Write-Both "    [!] There are $count accounts in the 'Protected Users' group, see accounts_protectedusers.txt"
-            Write-Nessus-Finding "ProtectedUsers" "KB549" (Get-Content -Raw -Path "$outputdir\accounts_protectedusers.txt")
+            Write-Nessus-Finding "ProtectedUsers" "KB549" ([System.IO.File]::ReadAllText("$outputdir\accounts_protectedusers.txt"))
         }
     }
     else {Write-Both "    [-] Not Windows 2012 Domain Functional level or above, skipping Get-ProtectedUsers check."}
@@ -235,7 +237,7 @@ function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
     }
     if ($count -gt 0){
         Write-Both "    [!] $count accounts with passwords older than 90days, see accounts_with_old_passwords.txt (KB550)"
-        Write-Nessus-Finding "AccountsWithOldPasswords" "KB550" (Get-Content -Raw -Path "$outputdir\accounts_with_old_passwords.txt")
+        Write-Nessus-Finding "AccountsWithOldPasswords" "KB550" ([System.IO.File]::ReadAllText("$outputdir\accounts_with_old_passwords.txt"))
     }
     $krbtgtPasswordDate = (get-aduser -Filter {samaccountname -eq "krbtgt"} -Properties PasswordLastSet).PasswordLastSet
     if ($krbtgtPasswordDate -lt (Get-Date).AddDays(-180)){
@@ -321,7 +323,7 @@ function Get-InactiveAccounts{#lists accounts not used in past 180 days plus som
     }
     if ($count -gt 0){
         Write-Both "    [!] $count inactive user accounts(180days), see accounts_inactive.txt (KB500)"
-        Write-Nessus-Finding "InactiveAccounts" "KB500" (Get-Content -Raw -Path "$outputdir\accounts_inactive.txt")
+        Write-Nessus-Finding "InactiveAccounts" "KB500" ([System.IO.File]::ReadAllText("$outputdir\accounts_inactive.txt"))
     }
 }
 function Get-AdminAccountChecks{# checks if Administrator account has been renamed, replaced and is no longer used.
@@ -354,7 +356,7 @@ function Get-DisabledAccounts{#lists disabled accounts
     }
     if ($count -gt 0){
         Write-Both "    [!] $count disabled user accounts, see accounts_disabled.txt (KB501)"
-        Write-Nessus-Finding "DisabledAccounts" "KB501" (Get-Content -Raw -Path "$outputdir\accounts_disabled.txt")
+        Write-Nessus-Finding "DisabledAccounts" "KB501" ([System.IO.File]::ReadAllText("$outputdir\accounts_disabled.txt"))
     }
 }
 function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
@@ -369,7 +371,7 @@ function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
     }
     if ($count -gt 0){
         Write-Both "    [!] There are $count accounts that don't expire, see accounts_passdontexpire.txt (KB254)"
-        Write-Nessus-Finding "AccountsThatDontExpire" "KB254" (Get-Content -Raw -Path "$outputdir\accounts_passdontexpire.txt")
+        Write-Nessus-Finding "AccountsThatDontExpire" "KB254" ([System.IO.File]::ReadAllText("$outputdir\accounts_passdontexpire.txt"))
     }
 }
 function Get-OldBoxes{#lists server 2000/2003/XP machines
@@ -384,7 +386,7 @@ function Get-OldBoxes{#lists server 2000/2003/XP machines
     }
     if ($count -gt 0){
         Write-Both "    [!] We found $count machines running server 2003/XP! see machines_old.txt (KB3/37/38/KB259)"
-        Write-Nessus-Finding "OldBoxes" "KB259" (Get-Content -Raw -Path "$outputdir\machines_old.txt")
+        Write-Nessus-Finding "OldBoxes" "KB259" ([System.IO.File]::ReadAllText("$outputdir\machines_old.txt"))
     }
 }
 function Get-DCsNotOwnedByDA {#searches for DC objects not owned by the Domain Admins group
@@ -404,7 +406,7 @@ function Get-DCsNotOwnedByDA {#searches for DC objects not owned by the Domain A
     }
     if ($count -gt 0){
         Write-Both "    [!] We found $count DCs not owned by Domains Admins group! see dcs_not_owned_by_da.tx"
-        Write-Nessus-Finding "DCsNotByDA" "KB547" (Get-Content -Raw -Path "$outputdir\dcs_not_owned_by_da.txt")
+        Write-Nessus-Finding "DCsNotByDA" "KB547" ([System.IO.File]::ReadAllText("$outputdir\dcs_not_owned_by_da.txt"))
     }
 }
 function Get-HostDetails{#gets basic information about the host
