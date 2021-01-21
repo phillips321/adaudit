@@ -102,7 +102,7 @@ function Get-LAPSStatus{#Check for presence of LAPS in domain
 }
 
 Function Get-PrivilegedGroupAccounts{#lists users in Admininstrators, DA and EA groups
-    [array]$privilegedusersarray = @()
+    [array]$privilegedusers = @()
     $privilegedusers += Get-ADGroupMember "administrators" -Recursive
     $privilegedusers += Get-ADGroupMember "domain admins" -Recursive
     $privilegedusers += Get-ADGroupMember "enterprise admins" -Recursive
