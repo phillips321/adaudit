@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v4.8 - Added checks for vista, win7 and 2008 old operating systems. Added insecure DNS zone checks.
     v4.7 - Added powershel-v2 suport and fixed array issue
     v4.6 - Fixed potential division by zero
     v4.5 - PR to resolve count issue when count = 1
@@ -51,6 +52,7 @@ param (
   [switch]$ouperms = $false,
   [switch]$laps = $false,
   [switch]$authpolsilos = $false,
+  [switch]$insecurednszone = $false,
   [switch]$all = $false
 )
 $versionnum = "v4.5"
@@ -72,6 +74,20 @@ function Write-Nessus-Finding( [string]$pluginname, [string]$pluginid, [string]$
 function Write-Nessus-Footer(){
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "</ReportHost></Report></AdAudit>"
 }
+
+Function Get-DNSZoneInsecure{#Check DNS zones allowing insecure updates
+    $count = 0
+    $progresscount = 0
+    $insecurezones = Get-DnsServerZone | Where-Object {$_.DynamicUpdate -like '*nonsecure*'}
+    $totalcount = ($insecurezones | Measure-Object | Select-Object Count).count
+        if ($totalcount -gt 0){
+		foreach ($insecurezone in $insecurezones ) {Add-Content -Path "$outputdir\insecure_dns_zones.txt" -Value "The DNS Zone $($insecurezone.ZoneName) allows insecure updates ($($insecurezone.DynamicUpdate))"}
+	    #$insecurezones | Out-File $outputdir\insecure_dns_zones.txt
+        Write-Both "    [!] There were $totalcount DNS zones configured to allow insecure updates (KB842)"
+        Write-Nessus-Finding "InsecureDNSZone" "KB842" ([System.IO.File]::ReadAllText("$outputdir\insecure_dns_zones.txt"))
+		}
+    }
+	
 function Get-OUPerms{#Check for non-standard perms for authenticated users, domain users, users and everyone groups
     $count = 0
     $progresscount = 0
@@ -185,6 +201,7 @@ function Get-NULLSessions{
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymousSam -eq 0) {Write-Both "    [!] RestrictAnonymousSam is set to 0! (KB81)" ; Write-Nessus-Finding "NullSessions" "KB81" " RestrictAnonymous is set to 0" }
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).everyoneincludesanonymous -eq 1) {Write-Both "    [!] EveryoneIncludesAnonymous is set to 1! (KB81)" ; Write-Nessus-Finding "NullSessions" "KB81" "EveryoneIncludesAnonymous is set to 1" }
 }
+
 function Get-DomainTrusts{#lists domain trusts if they are bad
     ForEach ($trust in (Get-ADObject -Filter {objectClass -eq "trustedDomain"} -Properties TrustPartner,TrustDirection,trustType,trustAttributes)){
         if ($trust.TrustDirection -eq 2){
@@ -376,7 +393,7 @@ function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
 }
 function Get-OldBoxes{#lists server 2000/2003/XP machines
     $count = 0
-    $oldboxes = Get-ADComputer -Filter {OperatingSystem -Like "*2003*" -and Enabled -eq "true" -or OperatingSystem -Like "*XP*" -and Enabled -eq "true" -or OperatingSystem -Like "*2000*" -and Enabled -eq "true"} -Property *
+    $oldboxes = Get-ADComputer -Filter {OperatingSystem -Like "*2003*" -and Enabled -eq "true" -or OperatingSystem -Like "*XP*" -and Enabled -eq "true" -or OperatingSystem -Like "*2000*" -and Enabled -eq "true" -or OperatingSystem -like '*Windows 7*' -and Enabled -eq "true" -or OperatingSystem -like '*vista*' -and Enabled -eq "true" -or OperatingSystem -like '*2008*' -and Enabled -eq "true"} -Property OperatingSystem
     $totalcount = ($oldboxes | Measure-Object | Select-Object Count).count
     ForEach ($machine in $oldboxes){
         if ($totalcount -eq 0) {break}
@@ -868,6 +885,7 @@ if ($gpo -Or $all) { $running=$true; Write-Both "[*] GPO audit (and checking SYS
 if ($ouperms -Or $all) { $running=$true; Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms }
 if ($laps -Or $all) { $running=$true; Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus }
 if ($authpolsilos -Or $all) { $running=$true; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
+if ($insecurednszone -Or $all) { $running=$true; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
 if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "[!] Other options are as follows, they can be used in combination"
     Write-Both "    -hostdetails retrieves hostname and other useful audit info"
