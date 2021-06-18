@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v4.9 - Bug fix in checking password comlexity
     v4.8 - Added checks for vista, win7 and 2008 old operating systems. Added insecure DNS zone checks.
     v4.7 - Added powershel-v2 suport and fixed array issue
     v4.6 - Fixed potential division by zero
@@ -176,7 +177,7 @@ function Get-MachineAccountQuota{#get number of machines a user can add to a dom
 }
 function Get-PasswordPolicy{
 	Write-Both 	"    [+] Checking default password policy"
-    if (!(Get-ADDefaultDomainPasswordPolicy).PasswordComplexity) { Write-Both "    [!] Password Complexity not enabled (KB262)" ; Write-Nessus-Finding "PasswordComplexity" "KB262" "Password Complexity not enabled"}
+    if (!(Get-ADDefaultDomainPasswordPolicy).ComplexityEnabled) { Write-Both "    [!] Password Complexity not enabled (KB262)" ; Write-Nessus-Finding "PasswordComplexity" "KB262" "Password Complexity not enabled"}
     if ((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold -lt 5) {Write-Both "    [!] Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold) (KB263)"  ; Write-Nessus-Finding "LockoutThreshold" "KB263" "Lockout threshold is less than 5, currently set to $((Get-ADDefaultDomainPasswordPolicy).LockoutThreshold)"}
     if ((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength -lt 14) {Write-Both "    [!] Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength) (KB262)" ; Write-Nessus-Finding "PasswordLength" "KB262" "Minimum password length is less than 14, currently set to $((Get-ADDefaultDomainPasswordPolicy).MinPasswordLength)" }
     if ((Get-ADDefaultDomainPasswordPolicy).ReversibleEncryptionEnabled) {Write-Both "    [!] Reversible encryption is enabled" }
