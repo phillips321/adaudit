@@ -47,6 +47,8 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
   * Get-LAPSStatus
 * Check For Existence of Authentication Polices and Silos
   * Get-AuthenticationPoliciesAndSilos
+* Check for insecure DNS zones
+  * Get-DNSZoneInsecure
 
 ## Runtime Args
 The following switches can be used in combination
@@ -61,4 +63,5 @@ The following switches can be used in combination
 * -ouperms checks generic OU permission issues
 * -laps checks if LAPS is installed
 * -authpolsilos checks for existenece of authentication policies and silos
+* -insecurednszone checks for insecure dns zones
 * -all runs all checks, e.g. AdAudit.ps1 -all
