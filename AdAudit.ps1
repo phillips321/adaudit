@@ -1,7 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
-    v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error.
+    v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
     v4.8 - Added checks for vista, win7 and 2008 old operating systems. Added insecure DNS zone checks.
     v4.7 - Added powershel-v2 suport and fixed array issue
@@ -59,33 +59,43 @@ param (
 )
 $versionnum = "v5.0"
 
-# Retrieve group names
-$Administrators                 = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
-$Users                          = (Get-ADGroup -Identity S-1-5-32-545).SamAccountName
-$DomainAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-512"
-$DomainUsersSID                 = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-513"
-$DomainControllersSID           = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-516"
-$SchemaAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-518"
-$EnterpriseAdminsSID            = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-519"
-$ProtectedUsersSID              = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
-$EveryOneSID                    = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
-$EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
-$AuthenticatedUsersSID          = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
-$LocalServiceSID                = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-19"
-$DomainAdmins                   = (Get-ADGroup -Identity $DomainAdminsSID).SamAccountName
-$DomainUsers                    = (Get-ADGroup -Identity $DomainUsersSID).SamAccountName
-$DomainControllers              = (Get-ADGroup -Identity $DomainControllersSID).SamAccountName
-$SchemaAdmins                   = (Get-ADGroup -Identity $SchemaAdminsSID).SamAccountName
-$EnterpriseAdmins               = (Get-ADGroup -Identity $EnterpriseAdminsSID).SamAccountName
-$ProtectedUsers                 = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
-$EveryOne                       = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
-$EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
-$AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
-$LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
-
-# OS version
-$OSVersion = (get-itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
-
+Function Get-Variables(){#retrieve group names and os version
+    $Administrators                 = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
+    $Users                          = (Get-ADGroup -Identity S-1-5-32-545).SamAccountName
+    $DomainAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-512"
+    $DomainUsersSID                 = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-513"
+    $DomainControllersSID           = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-516"
+    $SchemaAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-518"
+    $EnterpriseAdminsSID            = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-519"
+    $ProtectedUsersSID              = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
+    $EveryOneSID                    = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
+    $EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
+    $AuthenticatedUsersSID          = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
+    $LocalServiceSID                = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-19"
+    $DomainAdmins                   = (Get-ADGroup -Identity $DomainAdminsSID).SamAccountName
+    $DomainUsers                    = (Get-ADGroup -Identity $DomainUsersSID).SamAccountName
+    $DomainControllers              = (Get-ADGroup -Identity $DomainControllersSID).SamAccountName
+    $SchemaAdmins                   = (Get-ADGroup -Identity $SchemaAdminsSID).SamAccountName
+    $EnterpriseAdmins               = (Get-ADGroup -Identity $EnterpriseAdminsSID).SamAccountName
+    $ProtectedUsers                 = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
+    $EveryOne                       = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
+    $EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
+    $AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
+    $LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
+    $OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
+    Write-Both "    [+] Administrators:  $Administrators"
+    Write-Both "    [+] Users:  $Users"
+    Write-Both "    [+] Domain Admins:  $DomainAdmins"
+    Write-Both "    [+] Domain Users:  $DomainUsers"
+    Write-Both "    [+] Domain Controllers:  $DomainControllers"
+    Write-Both "    [+] Schema Admins:  $SchemaAdmins"
+    Write-Both "    [+] Enterprise Admins:  $EnterpriseAdmins"
+    Write-Both "    [+] Protected Users:  $ProtectedUsers"
+    Write-Both "    [+] Every One:  $EveryOne"
+    Write-Both "    [+] Entreprise Domain Controllers:  $EntrepriseDomainControllers"
+    Write-Both "    [+] Authenticated Users:  $AuthenticatedUsers"
+    Write-Both "    [+] Local Service:  $LocalService"
+}
 Function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"
 }
@@ -106,17 +116,21 @@ Function Write-Nessus-Footer(){
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "</ReportHost></Report></AdAudit>"
 }
 Function Get-DNSZoneInsecure{#Check DNS zones allowing insecure updates
-    $count = 0
-    $progresscount = 0
-    $insecurezones = Get-DnsServerZone | Where-Object {$_.DynamicUpdate -like '*nonsecure*'}
-    $totalcount = ($insecurezones | Measure-Object | Select-Object Count).count
+    if ($OSVersion -like "Windows Server 2008*") {
+        $count = 0
+        $progresscount = 0
+        $insecurezones = Get-DnsServerZone | Where-Object {$_.DynamicUpdate -like '*nonsecure*'}
+        $totalcount = ($insecurezones | Measure-Object | Select-Object Count).count
         if ($totalcount -gt 0){
-        foreach ($insecurezone in $insecurezones ) {Add-Content -Path "$outputdir\insecure_dns_zones.txt" -Value "The DNS Zone $($insecurezone.ZoneName) allows insecure updates ($($insecurezone.DynamicUpdate))"}
-        #$insecurezones | Out-File $outputdir\insecure_dns_zones.txt
-        Write-Both "    [!] There were $totalcount DNS zones configured to allow insecure updates (KB842)"
-        Write-Nessus-Finding "InsecureDNSZone" "KB842" ([System.IO.File]::ReadAllText("$outputdir\insecure_dns_zones.txt"))
+            foreach ($insecurezone in $insecurezones ) {Add-Content -Path "$outputdir\insecure_dns_zones.txt" -Value "The DNS Zone $($insecurezone.ZoneName) allows insecure updates ($($insecurezone.DynamicUpdate))"}
+            #$insecurezones | Out-File $outputdir\insecure_dns_zones.txt
+            Write-Both "    [!] There were $totalcount DNS zones configured to allow insecure updates (KB842)"
+            Write-Nessus-Finding "InsecureDNSZone" "KB842" ([System.IO.File]::ReadAllText("$outputdir\insecure_dns_zones.txt"))
         }
+    }else{
+        Write-Both "    [-] Not Windows 2012 or above, skipping Get-DNSZoneInsecure check."
     }
+}
 Function Get-OUPerms{#Check for non-standard perms for authenticated users, domain users, users and everyone groups
     $count = 0
     $progresscount = 0
@@ -215,7 +229,6 @@ Function Get-PasswordPolicy{
     if ((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount -lt 12) {Write-Both "    [!] Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount) (KB262)" ; Write-Nessus-Finding "PasswordHistory" "KB262" "Passwords history is less than 12, currently set to $((Get-ADDefaultDomainPasswordPolicy).PasswordHistoryCount)"}
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).NoLmHash -eq 0) {Write-Both "    [!] LM Hashes are stored! (KB510)" ; Write-Nessus-Finding "LMHashesAreStored" "KB510" "LM Hashes are stored" }
     Write-Both "    [-] Finished checking default password policy"
-
     Write-Both "    [+] Checking fine-grained password policies if they exist"
     #foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) { Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] Applies to: ($($finegrainedpolicy).AppliesTo)"
     foreach ($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *) {$finegrainedpolicyappliesto=$finegrainedpolicy.AppliesTo; Write-Both "    [!] Policy: $finegrainedpolicy"; Write-Both "    [!] AppliesTo: $($finegrainedpolicyappliesto)"
@@ -336,7 +349,7 @@ Function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.co
             $Distinguishedname = (split-path (split-path (split-path( split-path (split-path $File -Parent) -parent ) -parent ) -parent) -Leaf).Substring(1).TrimEnd('}')
             [xml]$Xml = Get-Content ($File)
             if ($Xml.innerxml -like "*cpassword*" -and $Xml.innerxml -notlike '*cpassword=""*'){
-                if (!(Test-Path "$outputdir\sysvol")) { New-Item -ItemType directory -Path "$outputdir\sysvol" | out-null }
+                if (!(Test-Path "$outputdir\sysvol")) { New-Item -ItemType directory -Path "$outputdir\sysvol" | Out-Null }
                 Write-Both "    [!] cpassword found in file, copying to output folder (KB329)"
                 Write-Both "        $File"
                 copy-item -Path $File -Destination $outputdir\sysvol\$Distinguishedname.$Filename
@@ -893,9 +906,9 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
 }
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
-$starttime = get-date
+$starttime = Get-Date
 $scriptname = $MyInvocation.MyCommand.Name
-if (!(Test-Path "$outputdir")) { New-Item -ItemType directory -Path $outputdir | out-null }
+if (!(Test-Path "$outputdir")) { New-Item -ItemType directory -Path $outputdir | Out-Null }
 Write-Both " _____ ____     _____       _ _ _
 |  _  |    \   |  _  |_ _ _| |_| |_
 |     |  |  |  |     | | | . | |  _|
@@ -904,12 +917,13 @@ $versionnum                  by phillips321
 "
 $running=$false
 Write-Both "[*] Script start time $starttime"
-if (Get-Module -ListAvailable -Name ActiveDirectory){import-module ActiveDirectory} else {write-host "[!] ActiveDirectory module not installed, exiting..." ; exit}
-if (Get-Module -ListAvailable -Name ServerManager){import-module ServerManager} else {write-host "[!] ServerManager module not installed, exiting..." ; exit}
-if (Get-Module -ListAvailable -Name GroupPolicy){import-module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
-if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\adaudit.nessus" | out-null }
+if (Get-Module -ListAvailable -Name ActiveDirectory){Import-Module ActiveDirectory} else {write-host "[!] ActiveDirectory module not installed, exiting..." ; exit}
+if (Get-Module -ListAvailable -Name ServerManager){Import-Module ServerManager} else {write-host "[!] ServerManager module not installed, exiting..." ; exit}
+if (Get-Module -ListAvailable -Name GroupPolicy){Import-Module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
+if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\adaudit.nessus" | Out-Null }
 Write-Nessus-Header
-write-host "[+] Outputting to $outputdir"
+Write-Host "[+] Outputting to $outputdir"
+Write-Both "[*] Lang specific variables" ; Get-Variables
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
 if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
@@ -947,5 +961,5 @@ $nessusoutput = $nessusoutput -Replace "`'", "&apos;"
 $nessusoutput = $nessusoutput -Replace "ü", "u"
 $nessusoutput | Out-File $outputdir\adaudit-replaced.nessus
 
-$endtime = get-date
+$endtime = Get-Date
 Write-Both "[*] Script end time $endtime"
