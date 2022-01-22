@@ -55,7 +55,7 @@ param (
   [switch]$laps = $false,
   [switch]$authpolsilos = $false,
   [switch]$insecurednszone = $false,
-  [switch]$all = $true
+  [switch]$all = $false
 )
 $versionnum = "v5.0"
 
@@ -116,7 +116,7 @@ Function Write-Nessus-Footer(){
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "</ReportHost></Report></AdAudit>"
 }
 Function Get-DNSZoneInsecure{#Check DNS zones allowing insecure updates
-    if ($OSVersion -like "Windows Server 2008*") {
+    if ($OSVersion -notlike "Windows Server 2008*") {
         $count = 0
         $progresscount = 0
         $insecurezones = Get-DnsServerZone | Where-Object {$_.DynamicUpdate -like '*nonsecure*'}
@@ -949,6 +949,7 @@ if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "    -ouperms checks generic OU permission issues"
     Write-Both "    -laps checks if LAPS is installed"
     Write-Both "    -authpolsilos checks for existenece of authentication policies and silos"
+    Write-Both "    -insecurednszone checks for insecure dns zones"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
 }
 Write-Nessus-Footer
