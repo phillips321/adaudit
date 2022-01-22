@@ -60,29 +60,29 @@ param (
 $versionnum = "v5.0"
 
 Function Get-Variables(){#retrieve group names and os version
-    $Administrators                 = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
-    $Users                          = (Get-ADGroup -Identity S-1-5-32-545).SamAccountName
-    $DomainAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-512"
-    $DomainUsersSID                 = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-513"
-    $DomainControllersSID           = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-516"
-    $SchemaAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-518"
-    $EnterpriseAdminsSID            = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-519"
-    $ProtectedUsersSID              = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
-    $EveryOneSID                    = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
-    $EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
-    $AuthenticatedUsersSID          = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
-    $LocalServiceSID                = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-19"
-    $DomainAdmins                   = (Get-ADGroup -Identity $DomainAdminsSID).SamAccountName
-    $DomainUsers                    = (Get-ADGroup -Identity $DomainUsersSID).SamAccountName
-    $DomainControllers              = (Get-ADGroup -Identity $DomainControllersSID).SamAccountName
-    $SchemaAdmins                   = (Get-ADGroup -Identity $SchemaAdminsSID).SamAccountName
-    $EnterpriseAdmins               = (Get-ADGroup -Identity $EnterpriseAdminsSID).SamAccountName
-    $ProtectedUsers                 = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
-    $EveryOne                       = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
-    $EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
-    $AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
-    $LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
-    $OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
+    $script:Administrators                 = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
+    $script:Users                          = (Get-ADGroup -Identity S-1-5-32-545).SamAccountName
+    $script:DomainAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-512"
+    $script:DomainUsersSID                 = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-513"
+    $script:DomainControllersSID           = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-516"
+    $script:SchemaAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-518"
+    $script:EnterpriseAdminsSID            = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-519"
+    $script:ProtectedUsersSID              = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
+    $script:EveryOneSID                    = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
+    $script:EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
+    $script:AuthenticatedUsersSID          = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
+    $script:LocalServiceSID                = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-19"
+    $script:DomainAdmins                   = (Get-ADGroup -Identity $DomainAdminsSID).SamAccountName
+    $script:DomainUsers                    = (Get-ADGroup -Identity $DomainUsersSID).SamAccountName
+    $script:DomainControllers              = (Get-ADGroup -Identity $DomainControllersSID).SamAccountName
+    $script:SchemaAdmins                   = (Get-ADGroup -Identity $SchemaAdminsSID).SamAccountName
+    $script:EnterpriseAdmins               = (Get-ADGroup -Identity $EnterpriseAdminsSID).SamAccountName
+    $script:ProtectedUsers                 = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
+    $script:EveryOne                       = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
+    $script:EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
+    $script:AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
+    $script:LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
+    $script:OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
     Write-Both "    [+] Administrators:  $Administrators"
     Write-Both "    [+] Users:  $Users"
     Write-Both "    [+] Domain Admins:  $DomainAdmins"
