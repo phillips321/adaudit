@@ -83,6 +83,9 @@ $EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([Sys
 $AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
 $LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
 
+# OS version
+$OSVersion = (get-itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
+
 Function Write-Both(){#writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"
 }
@@ -123,7 +126,11 @@ Function Get-OUPerms{#Check for non-standard perms for authenticated users, doma
         if ($totalcount -eq 0) {break}
         $progresscount++
         Write-Progress -Activity "Searching for non standard permissions for authenticated users..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
-        $output = (Get-Acl "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$object").Access | where-object {($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users")} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny')}
+        if ($OSVersion -like "Windows Server 2019*") {
+            $output = (Get-Acl "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$object").Access | where-object {($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users")} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny')}
+        } else {
+            $output = (Get-Acl AD:$object).Access | where-object {($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users")} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny')}
+        }
         if ($output -ne $null) {$count++ ; Add-Content -Path "$outputdir\ou_permissions.txt" -Value  "OU: $object"; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "[!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
     }
     if ($count -gt 0){
@@ -375,7 +382,7 @@ Function Get-AdminAccountChecks{# checks if Administrator account has been renam
     }
     elseif (!(Get-ADUser -Filter {samaccountname -eq "Administrator" -or samaccountname -eq "Administrateur"})){
         Write-Both "    [!] Local Administrator account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place! (KB309)"
-        Write-Nessus-Finding "AdminAccountRenamed" "KB309" "Local Admini account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place"
+        Write-Nessus-Finding "AdminAccountRenamed" "KB309" "Local Admin account renamed to $AdministratorSAMAccountName ($($account.Name)), but a dummy account not made in it's place"
     }
     $AdministratorLastLogonDate =  (Get-ADUser -Filter {SID -eq $AdministratorSID}  -properties lastlogondate).lastlogondate
     if ($AdministratorLastLogonDate -gt (Get-Date).AddDays(-180)){
@@ -923,7 +930,7 @@ if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "    -accounts identifies account issues such as expired, disabled, etc..."
     Write-Both "    -passwordpolicy retrieves password policy information "
     Write-Both "    -ntds dumps the NTDS.dit file using ntdsutil"
-    Write-Both "    -oldboxes identified outdated OSs like XP/2003 joined to the domain"
+    Write-Both "    -oldboxes identified outdated OSs like 2000/2003/XP/Vista/7/2008 joined to the domain"
     Write-Both "    -gpo dumps the GPOs in XML and HTML for later analysis"
     Write-Both "    -ouperms checks generic OU permission issues"
     Write-Both "    -laps checks if LAPS is installed"
