@@ -925,17 +925,10 @@ Function Get-RecentChanges(){#Retrieve users and groups that have been created d
     }
 }
 Function Get-ReplicationType{#Retrieve replication mechanism (FRS or DFSR)
-    $currentDomain =(Get-ADDomainController).hostname
-    $defaultNamingContext = (([ADSI]"LDAP://$currentDomain/rootDSE").defaultNamingContext)
-    $searcher = New-Object DirectoryServices.DirectorySearcher
-    $searcher.Filter = "(&(objectClass=computer)(dNSHostName=$currentDomain))"
-    $searcher.SearchRoot = "LDAP://" + $currentDomain + "/OU=Domain Controllers," + $defaultNamingContext
-    $dcObjectPath = $searcher.FindAll() | %{$_.Path}
-    $searchDFSR = New-Object DirectoryServices.DirectorySearcher
-    $searchDFSR.Filter = "(&(objectClass=msDFSR-Subscription)(name=SYSVOL Subscription))"
-    $searchDFSR.SearchRoot = $dcObjectPath
-    $dfsrSubObject = $searchDFSR.FindAll()
-    if ($dfsrSubObject -ne $null){
+    $objectName   = "DFSR-GlobalSettings"
+    $searcher     = [ADSISearcher] "(objectClass=msDFSR-GlobalSettings)"
+    $objectExists = $searcher.FindOne() -ne $null
+    if ($objectExists){
         $DFSRFlags=(Get-ADObject -Identity "CN=DFSR-GlobalSettings,$((Get-ADDomain).systemscontainer)" -Properties msDFSR-Flags).'msDFSR-Flags'
         switch($DFSRFlags){
                 0       { Write-Both "    [!] Migration from FRS to DFSR is not finished. Current state: started!" }
