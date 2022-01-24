@@ -49,6 +49,8 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
   * Get-AuthenticationPoliciesAndSilos
 * Check for insecure DNS zones
   * Get-DNSZoneInsecure
+* Check for newly created users and groups
+  * Get-RecentChanges
 
 ## Runtime Args
 The following switches can be used in combination
@@ -64,4 +66,5 @@ The following switches can be used in combination
 * -laps checks if LAPS is installed
 * -authpolsilos checks for existenece of authentication policies and silos
 * -insecurednszone checks for insecure dns zones
+* -recentchanges checks for newly created users and groups (last 30 days)
 * -all runs all checks, e.g. AdAudit.ps1 -all
