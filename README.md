@@ -21,6 +21,7 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
   * Get-FunctionalLevel
   * Get-DCsNotOwnedByDA
   * Get-ReplicationType
+  * Get-RecycleBinState
 * Domain Trust Audit
   * Get-DomainTrusts
 * User Accounts Audit
