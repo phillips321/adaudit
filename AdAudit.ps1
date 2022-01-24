@@ -920,7 +920,7 @@ Function Get-RecentChanges(){#Retrieve users and groups that have been created d
         Write-Both "    [!] $totalcountUsers new users were created last 30 days, see $outputdir\new_users.txt"
     }
     if ($totalcountGroups -gt 0){
-        foreach ($newGroup in $newGroups ) {Add-Content -Path "$outputdir\new_groups.txt" -Value "Account $($newGroup.SamAccountName) was created $($newGroup.whenCreated)"}
+        foreach ($newGroup in $newGroups ) {Add-Content -Path "$outputdir\new_groups.txt" -Value "Group $($newGroup.SamAccountName) was created $($newGroup.whenCreated)"}
         Write-Both "    [!] $totalcountGroups new groups were created last 30 days, see $outputdir\new_groups.txt"
     }
 }
