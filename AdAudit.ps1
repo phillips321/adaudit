@@ -1,7 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
-    v5.1 - Added check for newly created users and groups
+    v5.1 - Added check for newly created users and groups. Added check for replication mechanism. Fix ProtectedUsers group for WS 2008.
     v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
     v4.8 - Added checks for vista, win7 and 2008 old operating systems. Added insecure DNS zone checks.
@@ -62,6 +62,7 @@ param (
 $versionnum = "v5.1"
 
 Function Get-Variables(){#retrieve group names and os version
+    $script:OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
     $script:Administrators                 = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
     $script:Users                          = (Get-ADGroup -Identity S-1-5-32-545).SamAccountName
     $script:DomainAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-512"
@@ -69,7 +70,9 @@ Function Get-Variables(){#retrieve group names and os version
     $script:DomainControllersSID           = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-516"
     $script:SchemaAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-518"
     $script:EnterpriseAdminsSID            = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-519"
-    $script:ProtectedUsersSID              = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
+    if ($OSVersion -notlike "Windows Server 2008*") {
+        $script:ProtectedUsersSID          = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
+    }
     $script:EveryOneSID                    = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
     $script:EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
     $script:AuthenticatedUsersSID          = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
@@ -79,12 +82,13 @@ Function Get-Variables(){#retrieve group names and os version
     $script:DomainControllers              = (Get-ADGroup -Identity $DomainControllersSID).SamAccountName
     $script:SchemaAdmins                   = (Get-ADGroup -Identity $SchemaAdminsSID).SamAccountName
     $script:EnterpriseAdmins               = (Get-ADGroup -Identity $EnterpriseAdminsSID).SamAccountName
-    $script:ProtectedUsers                 = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
+    if ($OSVersion -notlike "Windows Server 2008*") {
+        $script:ProtectedUsers             = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
+    }
     $script:EveryOne                       = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
-    $script:OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
     Write-Both "    [+] Administrators:  $Administrators"
     Write-Both "    [+] Users:  $Users"
     Write-Both "    [+] Domain Admins:  $DomainAdmins"
@@ -925,6 +929,29 @@ Function Get-RecentChanges(){#Retrieve users and groups that have been created d
         Write-Both "    [!] $totalcountGroups new groups were created last 30 days, see $outputdir\new_groups.txt"
     }
 }
+Function Get-ReplicationType{#Retrieve replication mechanism (FRS or DFSR)
+    $currentDomain =(Get-ADDomainController).hostname
+    $defaultNamingContext = (([ADSI]"LDAP://$currentDomain/rootDSE").defaultNamingContext)
+    $searcher = New-Object DirectoryServices.DirectorySearcher
+    $searcher.Filter = "(&(objectClass=computer)(dNSHostName=$currentDomain))"
+    $searcher.SearchRoot = "LDAP://" + $currentDomain + "/OU=Domain Controllers," + $defaultNamingContext
+    $dcObjectPath = $searcher.FindAll() | %{$_.Path}
+    $searchDFSR = New-Object DirectoryServices.DirectorySearcher
+    $searchDFSR.Filter = "(&(objectClass=msDFSR-Subscription)(name=SYSVOL Subscription))"
+    $searchDFSR.SearchRoot = $dcObjectPath
+    $dfsrSubObject = $searchDFSR.FindAll()
+    if ($dfsrSubObject -ne $null){
+        $DFSRFlags=(Get-ADObject -Identity "CN=DFSR-GlobalSettings,$((Get-ADDomain).systemscontainer)" -Properties msDFSR-Flags).'msDFSR-Flags'
+        switch($DFSRFlags){
+                0       { Write-Both "    [!] Migration from FRS to DFSR is not finished. Current state: started!" }
+                16      { Write-Both "    [!] Migration from FRS to DFSR is not finished. Current state: prepared!" }
+                32      { Write-Both "    [!] Migration from FRS to DFSR is not finished. Current state: redirected!" }
+                48      { Write-Both "    [+] DFSR mechanism is used to replicate across domain controllers." }
+        }
+    }else{
+        Write-Both "    [!] FRS mechanism is still used to replicate across domain controllers, you should migrate to DFSR!"
+    }
+}
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = Get-Date
@@ -946,7 +973,7 @@ Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
 Write-Both "[*] Lang specific variables" ; Get-Variables
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-PrivilegedGroupAccounts; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
