@@ -70,9 +70,6 @@ Function Get-Variables(){#retrieve group names and os version
     $script:DomainControllersSID           = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-516"
     $script:SchemaAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-518"
     $script:EnterpriseAdminsSID            = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-519"
-    if ($OSVersion -notlike "Windows Server 2008*") {
-        $script:ProtectedUsersSID          = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
-    }
     $script:EveryOneSID                    = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
     $script:EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
     $script:AuthenticatedUsersSID          = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
@@ -82,9 +79,6 @@ Function Get-Variables(){#retrieve group names and os version
     $script:DomainControllers              = (Get-ADGroup -Identity $DomainControllersSID).SamAccountName
     $script:SchemaAdmins                   = (Get-ADGroup -Identity $SchemaAdminsSID).SamAccountName
     $script:EnterpriseAdmins               = (Get-ADGroup -Identity $EnterpriseAdminsSID).SamAccountName
-    if ($OSVersion -notlike "Windows Server 2008*") {
-        $script:ProtectedUsers             = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
-    }
     $script:EveryOne                       = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
@@ -96,7 +90,6 @@ Function Get-Variables(){#retrieve group names and os version
     Write-Both "    [+] Domain Controllers:  $DomainControllers"
     Write-Both "    [+] Schema Admins:  $SchemaAdmins"
     Write-Both "    [+] Enterprise Admins:  $EnterpriseAdmins"
-    Write-Both "    [+] Protected Users:  $ProtectedUsers"
     Write-Both "    [+] Every One:  $EveryOne"
     Write-Both "    [+] Entreprise Domain Controllers:  $EntrepriseDomainControllers"
     Write-Both "    [+] Authenticated Users:  $AuthenticatedUsers"
@@ -191,6 +184,8 @@ Function Get-PrivilegedGroupAccounts{#lists users in Admininstrators, DA and EA 
 Function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
     $DomainLevel = (Get-ADDomain).domainMode
     if ($DomainLevel -eq "Windows2012Domain" -or $DomainLevel -eq "Windows2012R2Domain" -or $DomainLevel -eq "Windows2016Domain"){#Checking for 2012 or above domain functional level
+        $ProtectedUsersSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
+        $ProtectedUsers    = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
         $count = 0
         $protectedaccounts = (Get-ADGroup $ProtectedUsers -Properties members).Members
         $totalcount = ($protectedaccounts | Measure-Object | Select-Object Count).count
