@@ -55,6 +55,7 @@ param (
   [switch]$laps = $false,
   [switch]$authpolsilos = $false,
   [switch]$insecurednszone = $false,
+  [switch]$recentchanges = $false,
   [switch]$all = $false
 )
 $versionnum = "v5.0"
@@ -904,6 +905,25 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
         Write-Both "    [!] Excessive permissions in Default Domain Controllers Policy detected!";
     }
 }
+Function Get-RecentChanges(){#Retrieve users and groups that have been created during last 30 days
+    $DateCutOff          = ((Get-Date).AddDays(-30)).Date
+    $newUsers            = Get-ADUser  -Filter {whenCreated -ge $DateCutOff} -Properties whenCreated | select whenCreated,SamAccountName
+    $newGroups           = Get-ADGroup -Filter {whenCreated -ge $DateCutOff} -Properties whenCreated | select whenCreated,SamAccountName
+    $countUsers          = 0
+    $countGroups         = 0
+    $progresscountUsers  = 0
+    $progresscountGroups = 0
+    $totalcountUsers     = ($newUsers  | Measure-Object | Select-Object Count).count
+    $totalcountGroups    = ($newGroups | Measure-Object | Select-Object Count).count
+    if ($totalcountUsers -gt 0){
+        foreach ($newUser in $newUsers ) {Add-Content -Path "$outputdir\new_users.txt" -Value "Account $($newUser.SamAccountName) was created $($newUser.whenCreated)"}
+        Write-Both "    [!] $totalcountUsers new users were created last 30 days, see $outputdir\new_users.txt"
+    }
+    if ($totalcountGroups -gt 0){
+        foreach ($newGroup in $newGroups ) {Add-Content -Path "$outputdir\new_groups.txt" -Value "Account $($newGroup.SamAccountName) was created $($newGroup.whenCreated)"}
+        Write-Both "    [!] $totalcountGroups new groups were created last 30 days, see $outputdir\new_groups.txt"
+    }
+}
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = Get-Date
@@ -936,6 +956,7 @@ if ($ouperms -Or $all) { $running=$true; Write-Both "[*] Check Generic Group AD 
 if ($laps -Or $all) { $running=$true; Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus }
 if ($authpolsilos -Or $all) { $running=$true; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
 if ($insecurednszone -Or $all) { $running=$true; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
+if ($recentchanges -Or $all) { $running=$true; Write-Both "[*] Check For newly created users and groups" ; Get-RecentChanges }
 if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "[!] Other options are as follows, they can be used in combination"
     Write-Both "    -hostdetails retrieves hostname and other useful audit info"
@@ -950,6 +971,7 @@ if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "    -laps checks if LAPS is installed"
     Write-Both "    -authpolsilos checks for existenece of authentication policies and silos"
     Write-Both "    -insecurednszone checks for insecure dns zones"
+    Write-Both "    -recentchanges checks for newly created users and groups -(last 30 days)"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
 }
 Write-Nessus-Footer
