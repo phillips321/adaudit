@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v5.1 - Added check for newly created users and groups
     v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
     v4.8 - Added checks for vista, win7 and 2008 old operating systems. Added insecure DNS zone checks.
@@ -58,7 +59,7 @@ param (
   [switch]$recentchanges = $false,
   [switch]$all = $false
 )
-$versionnum = "v5.0"
+$versionnum = "v5.1"
 
 Function Get-Variables(){#retrieve group names and os version
     $script:Administrators                 = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
@@ -971,7 +972,7 @@ if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "    -laps checks if LAPS is installed"
     Write-Both "    -authpolsilos checks for existenece of authentication policies and silos"
     Write-Both "    -insecurednszone checks for insecure dns zones"
-    Write-Both "    -recentchanges checks for newly created users and groups -(last 30 days)"
+    Write-Both "    -recentchanges checks for newly created users and groups (last 30 days)"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
 }
 Write-Nessus-Footer
