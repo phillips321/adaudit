@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v5.2 - Enhanced Get-LAPSStatus. Added support for WS 2022.
     v5.1 - Added check for newly created users and groups. Added check for replication mechanism. Added check for Recycle Bin. Fix ProtectedUsers for WS 2008.
     v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
@@ -35,31 +36,28 @@ Changelog:
     v1.1 - Fixed bug where SYSVOL research returns empty
     v1.0 - First release
 ToDo:
-  Need to check what computers have LAPS assigned using: see adsecurity.org/?p=3164 objects ms-Mcs-AdmPwd or AdmPwdExpirationTime
-    Get-ADComputer -Filter {ms-mcs-admpwd -like '<not set>'} -Properties *
   Inactive domain trusts
   Accounts with sid history matching the domain
-  Schema Admins group not empty
   DCs with null session Enabled
 #>
 [cmdletbinding()]
 param (
-  [switch]$hostdetails = $false,
-  [switch]$domainaudit = $false,
-  [switch]$trusts = $false,
-  [switch]$accounts = $false,
-  [switch]$passwordpolicy = $false,
-  [switch]$ntds = $false,
-  [switch]$oldboxes = $false,
-  [switch]$gpo = $false,
-  [switch]$ouperms = $false,
-  [switch]$laps = $false,
-  [switch]$authpolsilos = $false,
-  [switch]$insecurednszone = $false,
-  [switch]$recentchanges = $false,
-  [switch]$all = $false
+    [switch]$hostdetails = $false,
+    [switch]$domainaudit = $false,
+    [switch]$trusts = $false,
+    [switch]$accounts = $false,
+    [switch]$passwordpolicy = $false,
+    [switch]$ntds = $false,
+    [switch]$oldboxes = $false,
+    [switch]$gpo = $false,
+    [switch]$ouperms = $false,
+    [switch]$laps = $false,
+    [switch]$authpolsilos = $false,
+    [switch]$insecurednszone = $false,
+    [switch]$recentchanges = $false,
+    [switch]$all = $false
 )
-$versionnum = "v5.1"
+$versionnum = "v5.2"
 
 Function Get-Variables(){#retrieve group names and os version
     $script:OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
@@ -73,6 +71,7 @@ Function Get-Variables(){#retrieve group names and os version
     $script:EveryOneSID                    = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
     $script:EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
     $script:AuthenticatedUsersSID          = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
+    $script:SystemSID                      = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-18"
     $script:LocalServiceSID                = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-19"
     $script:DomainAdmins                   = (Get-ADGroup -Identity $DomainAdminsSID).SamAccountName
     $script:DomainUsers                    = (Get-ADGroup -Identity $DomainUsersSID).SamAccountName
@@ -82,6 +81,7 @@ Function Get-Variables(){#retrieve group names and os version
     $script:EveryOne                       = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
+    $script:System                         = $SystemSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
     Write-Both "    [+] Administrators:  $Administrators"
     Write-Both "    [+] Users:  $Users"
@@ -115,14 +115,13 @@ Function Write-Nessus-Footer(){
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "</ReportHost></Report></AdAudit>"
 }
 Function Get-DNSZoneInsecure{#Check DNS zones allowing insecure updates
-    if ($OSVersion -notlike "Windows Server 2008*") {
+    if ($OSVersion -notlike "Windows Server 2008*"){
         $count = 0
         $progresscount = 0
         $insecurezones = Get-DnsServerZone | Where-Object {$_.DynamicUpdate -like '*nonsecure*'}
         $totalcount = ($insecurezones | Measure-Object | Select-Object Count).count
         if ($totalcount -gt 0){
             foreach ($insecurezone in $insecurezones ) {Add-Content -Path "$outputdir\insecure_dns_zones.txt" -Value "The DNS Zone $($insecurezone.ZoneName) allows insecure updates ($($insecurezone.DynamicUpdate))"}
-            #$insecurezones | Out-File $outputdir\insecure_dns_zones.txt
             Write-Both "    [!] There were $totalcount DNS zones configured to allow insecure updates (KB842)"
             Write-Nessus-Finding "InsecureDNSZone" "KB842" ([System.IO.File]::ReadAllText("$outputdir\insecure_dns_zones.txt"))
         }
@@ -139,12 +138,12 @@ Function Get-OUPerms{#Check for non-standard perms for authenticated users, doma
         if ($totalcount -eq 0) {break}
         $progresscount++
         Write-Progress -Activity "Searching for non standard permissions for authenticated users..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount*100)
-        if ($OSVersion -like "Windows Server 2019*") {
+        if ($OSVersion -like "Windows Server 2019*" -Or $OSVersion -like "Windows Server 2022*"){
             $output = (Get-Acl "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$object").Access | where-object {($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users")} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny')}
         } else {
             $output = (Get-Acl AD:$object).Access | where-object {($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users")} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny')}
         }
-        if ($output -ne $null) {$count++ ; Add-Content -Path "$outputdir\ou_permissions.txt" -Value  "OU: $object"; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "[!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
+        if ($output -ne $null) {$count++ ; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "OU: $object"; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "[!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"}
     }
     if ($count -gt 0){
         Write-Both "    [!] Issue identified, see $outputdir\ou_permissions.txt"
@@ -152,10 +151,37 @@ Function Get-OUPerms{#Check for non-standard perms for authenticated users, doma
     }
 }
 Function Get-LAPSStatus{#Check for presence of LAPS in domain
-        try{
+    try{
         Get-ADObject "CN=ms-Mcs-AdmPwd,CN=Schema,CN=Configuration,$((Get-ADDomain).DistinguishedName)" -ErrorAction Stop | Out-Null
-        Write-Both "    [!] LAPS Installed in domain"
-        #TODO: Need to check what computers have LAPS assigned using: Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd
+        Write-Both "    [+] LAPS Installed in domain"
+        $count = 0
+        $missingComputers = (Get-ADComputer -Filter {ms-mcs-admpwd -notlike "*"}).Name
+        $totalcount = ($missingComputers | Measure-Object | Select-Object Count).count
+        if ($totalcount -gt 0){
+            $missingComputers | Add-Content -Path $outputdir\laps_missing-computers.txt
+            Write-Both "    [!] Some computers/servers don't have LAPS password set, see $outputdir\laps_missing-computers.txt"
+        }
+        $count = 0
+        $computersList=(Get-ADComputer -Filter {ms-Mcs-AdmPwdExpirationTime -like "*"} -Properties ms-Mcs-AdmPwdExpirationTime | select Name,ms-Mcs-AdmPwdExpirationTime)
+        foreach ($computer in $computersList ){
+            $expiration = [datetime]::FromFileTime($computer.'ms-Mcs-AdmPwdExpirationTime')
+            $today=Get-Date
+            if($expiration -lt $today){
+                $count++
+                "$($computer.Name) password is expired since $expiration" | Add-Content -Path $outputdir\laps_expired-passwords.txt
+            }
+        }
+        if ($count -gt 0){
+            Write-Both "    [!] Some computers/servers have LAPS password expired, see $outputdir\laps_expired-passwords.txt"
+        }
+        Get-ADOrganizationalUnit -Filter * | Find-AdmPwdExtendedRights -PipelineVariable OU | foreach{
+            $_.ExtendedRightHolders | foreach{
+                if ($_ -ne  $System){
+                    "$_ can read password attribute of $($Ou.ObjectDN)" | Add-Content -Path $outputdir\laps_read-extendedrights.txt
+                }
+            }
+        }
+        Write-Both "    [!] LAPS extended rights exported, see $outputdir\laps_read-extendedrights.txt"
     }
     catch{
         Write-Both "    [!] LAPS Not Installed in domain (KB258)"
@@ -214,7 +240,7 @@ Function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies 
     }
 }
 Function Get-MachineAccountQuota{#get number of machines a user can add to a domain
-    $MachineAccountQuota = (Get-ADDomain | select -exp DistinguishedName | get-adobject -prop 'ms-DS-MachineAccountQuota' | select -exp ms-DS-MachineAccountQuota)
+    $MachineAccountQuota = (Get-ADDomain | select -exp DistinguishedName | Get-ADObject -prop 'ms-DS-MachineAccountQuota' | select -exp ms-DS-MachineAccountQuota)
     if ($MachineAccountQuota -gt 0){
         Write-Both "    [!] Domain users can add $MachineAccountQuota devices to the domain! (KB251)"
         Write-Nessus-Finding "DomainAccountQuota" "KB251" "Domain users can add $MachineAccountQuota devices to the domain"
@@ -742,6 +768,10 @@ Function Get-DCEval{#Basic validation of all DCs in forest
         if( ( $ads | Where-Object {$_.OperatingSystem -Match '2019'} ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2019";
             $ads | Where-Object {$_.OperatingSystem -Match '2019'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+        }
+        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2022'} ) -ne $null ){
+            Write-Both "        [+] Domain controllers with WS 2022";
+            $ads | Where-Object {$_.OperatingSystem -Match '2022'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
         }
     }
     #Validate DCs hotfix level
