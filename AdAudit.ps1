@@ -1,6 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
+    v5.1 - Added check for newly created users and groups. Added check for replication mechanism. Added check for Recycle Bin. Fix ProtectedUsers for WS 2008.
     v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
     v4.8 - Added checks for vista, win7 and 2008 old operating systems. Added insecure DNS zone checks.
@@ -55,11 +56,13 @@ param (
   [switch]$laps = $false,
   [switch]$authpolsilos = $false,
   [switch]$insecurednszone = $false,
+  [switch]$recentchanges = $false,
   [switch]$all = $false
 )
-$versionnum = "v5.0"
+$versionnum = "v5.1"
 
 Function Get-Variables(){#retrieve group names and os version
+    $script:OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
     $script:Administrators                 = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
     $script:Users                          = (Get-ADGroup -Identity S-1-5-32-545).SamAccountName
     $script:DomainAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-512"
@@ -67,7 +70,6 @@ Function Get-Variables(){#retrieve group names and os version
     $script:DomainControllersSID           = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-516"
     $script:SchemaAdminsSID                = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-518"
     $script:EnterpriseAdminsSID            = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-519"
-    $script:ProtectedUsersSID              = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
     $script:EveryOneSID                    = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
     $script:EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
     $script:AuthenticatedUsersSID          = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
@@ -77,12 +79,10 @@ Function Get-Variables(){#retrieve group names and os version
     $script:DomainControllers              = (Get-ADGroup -Identity $DomainControllersSID).SamAccountName
     $script:SchemaAdmins                   = (Get-ADGroup -Identity $SchemaAdminsSID).SamAccountName
     $script:EnterpriseAdmins               = (Get-ADGroup -Identity $EnterpriseAdminsSID).SamAccountName
-    $script:ProtectedUsers                 = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
     $script:EveryOne                       = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:EntrepriseDomainControllers    = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
-    $script:OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
     Write-Both "    [+] Administrators:  $Administrators"
     Write-Both "    [+] Users:  $Users"
     Write-Both "    [+] Domain Admins:  $DomainAdmins"
@@ -90,7 +90,6 @@ Function Get-Variables(){#retrieve group names and os version
     Write-Both "    [+] Domain Controllers:  $DomainControllers"
     Write-Both "    [+] Schema Admins:  $SchemaAdmins"
     Write-Both "    [+] Enterprise Admins:  $EnterpriseAdmins"
-    Write-Both "    [+] Protected Users:  $ProtectedUsers"
     Write-Both "    [+] Every One:  $EveryOne"
     Write-Both "    [+] Entreprise Domain Controllers:  $EntrepriseDomainControllers"
     Write-Both "    [+] Authenticated Users:  $AuthenticatedUsers"
@@ -185,6 +184,8 @@ Function Get-PrivilegedGroupAccounts{#lists users in Admininstrators, DA and EA 
 Function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
     $DomainLevel = (Get-ADDomain).domainMode
     if ($DomainLevel -eq "Windows2012Domain" -or $DomainLevel -eq "Windows2012R2Domain" -or $DomainLevel -eq "Windows2016Domain"){#Checking for 2012 or above domain functional level
+        $ProtectedUsersSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
+        $ProtectedUsers    = (Get-ADGroup -Identity $ProtectedUsersSID).SamAccountName
         $count = 0
         $protectedaccounts = (Get-ADGroup $ProtectedUsers -Properties members).Members
         $totalcount = ($protectedaccounts | Measure-Object | Select-Object Count).count
@@ -904,6 +905,48 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
         Write-Both "    [!] Excessive permissions in Default Domain Controllers Policy detected!";
     }
 }
+Function Get-RecentChanges(){#Retrieve users and groups that have been created during last 30 days
+    $DateCutOff          = ((Get-Date).AddDays(-30)).Date
+    $newUsers            = Get-ADUser  -Filter {whenCreated -ge $DateCutOff} -Properties whenCreated | select whenCreated,SamAccountName
+    $newGroups           = Get-ADGroup -Filter {whenCreated -ge $DateCutOff} -Properties whenCreated | select whenCreated,SamAccountName
+    $countUsers          = 0
+    $countGroups         = 0
+    $progresscountUsers  = 0
+    $progresscountGroups = 0
+    $totalcountUsers     = ($newUsers  | Measure-Object | Select-Object Count).count
+    $totalcountGroups    = ($newGroups | Measure-Object | Select-Object Count).count
+    if ($totalcountUsers -gt 0){
+        foreach ($newUser in $newUsers ) {Add-Content -Path "$outputdir\new_users.txt" -Value "Account $($newUser.SamAccountName) was created $($newUser.whenCreated)"}
+        Write-Both "    [!] $totalcountUsers new users were created last 30 days, see $outputdir\new_users.txt"
+    }
+    if ($totalcountGroups -gt 0){
+        foreach ($newGroup in $newGroups ) {Add-Content -Path "$outputdir\new_groups.txt" -Value "Group $($newGroup.SamAccountName) was created $($newGroup.whenCreated)"}
+        Write-Both "    [!] $totalcountGroups new groups were created last 30 days, see $outputdir\new_groups.txt"
+    }
+}
+Function Get-ReplicationType{#Retrieve replication mechanism (FRS or DFSR)
+    $objectName   = "DFSR-GlobalSettings"
+    $searcher     = [ADSISearcher] "(objectClass=msDFSR-GlobalSettings)"
+    $objectExists = $searcher.FindOne() -ne $null
+    if ($objectExists){
+        $DFSRFlags=(Get-ADObject -Identity "CN=DFSR-GlobalSettings,$((Get-ADDomain).systemscontainer)" -Properties msDFSR-Flags).'msDFSR-Flags'
+        switch($DFSRFlags){
+                0       { Write-Both "    [!] Migration from FRS to DFSR is not finished. Current state: started!" }
+                16      { Write-Both "    [!] Migration from FRS to DFSR is not finished. Current state: prepared!" }
+                32      { Write-Both "    [!] Migration from FRS to DFSR is not finished. Current state: redirected!" }
+                48      { Write-Both "    [+] DFSR mechanism is used to replicate across domain controllers." }
+        }
+    }else{
+        Write-Both "    [!] FRS mechanism is still used to replicate across domain controllers, you should migrate to DFSR!"
+    }
+}
+Function Get-RecycleBinState {#Check if recycle bin is enabled
+    if ((Get-ADOptionalFeature -Filter 'Name -eq "Recycle Bin Feature"').EnabledScopes){
+        Write-Both "    [+] Recycle Bin is enabled in the domain"
+    }else{
+        Write-Both "    [!] Recycle Bin is disabled in the domain, you should consider enabling it!"
+    }
+}
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = Get-Date
@@ -925,7 +968,7 @@ Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
 Write-Both "[*] Lang specific variables" ; Get-Variables
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-PrivilegedGroupAccounts; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
@@ -936,6 +979,7 @@ if ($ouperms -Or $all) { $running=$true; Write-Both "[*] Check Generic Group AD 
 if ($laps -Or $all) { $running=$true; Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus }
 if ($authpolsilos -Or $all) { $running=$true; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
 if ($insecurednszone -Or $all) { $running=$true; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
+if ($recentchanges -Or $all) { $running=$true; Write-Both "[*] Check For newly created users and groups" ; Get-RecentChanges }
 if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "[!] Other options are as follows, they can be used in combination"
     Write-Both "    -hostdetails retrieves hostname and other useful audit info"
@@ -950,6 +994,7 @@ if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "    -laps checks if LAPS is installed"
     Write-Both "    -authpolsilos checks for existenece of authentication policies and silos"
     Write-Both "    -insecurednszone checks for insecure dns zones"
+    Write-Both "    -recentchanges checks for newly created users and groups (last 30 days)"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
 }
 Write-Nessus-Footer
