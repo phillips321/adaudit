@@ -93,6 +93,7 @@ Function Get-Variables(){#retrieve group names and os version
     Write-Both "    [+] Every One:  $EveryOne"
     Write-Both "    [+] Entreprise Domain Controllers:  $EntrepriseDomainControllers"
     Write-Both "    [+] Authenticated Users:  $AuthenticatedUsers"
+    Write-Both "    [+] System:  $System"
     Write-Both "    [+] Local Service:  $LocalService"
 }
 Function Write-Both(){#writes to console screen and output file
