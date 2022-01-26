@@ -1,7 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
-    v5.2 - Enhanced Get-LAPSStatus. Added news checks (AD services + Windows Update + NTP source). Added support for WS 2022. Fix OS version diffence check for WS 2008
+    v5.2 - Enhanced Get-LAPSStatus. Added news checks (AD services + Windows Update + NTP source). Added support for WS 2022. Fix OS version difference check for WS 2008
     v5.1 - Added check for newly created users and groups. Added check for replication mechanism. Added check for Recycle Bin. Fix ProtectedUsers for WS 2008.
     v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
