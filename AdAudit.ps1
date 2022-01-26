@@ -1,7 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
-    v5.2 - Enhanced Get-LAPSStatus. Added news checks (AD services + Windows Update + NTP source). Added support for WS 2022. Fix OS version difference check for WS 2008.
+    v5.2 - Enhanced Get-LAPSStatus. Added news checks (AD services + Windows Update + NTP source + Computer container + RODC). Added support for WS 2022. Fix OS version difference check for WS 2008.
     v5.1 - Added check for newly created users and groups. Added check for replication mechanism. Added check for Recycle Bin. Fix ProtectedUsers for WS 2008.
     v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
@@ -820,7 +820,9 @@ Function Get-DCEval{#Basic validation of all DCs in forest
         }
     }
     Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!";
-
+    #Check where newly joined computers go
+    $newComputers = (Get-ADDomain).ComputersContainer
+    Write-Both "    [+] New joined computers are stored in $newComputers";
 }
 Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controllers Policy for default unsecure and excessive options
     $ExcessiveDCInteractiveLogon = $false;
@@ -1032,6 +1034,15 @@ Function Get-TimeSource {#Get NTP sync source
         Write-Host "        [+] $DC is syncing time from $ntpSource"
     }
 }
+Function Get-RODC{#Check for RODC
+    Write-Both "    [+] Checking for Read Only DCs";
+    $ADs = Get-ADDomainController -Filter { Site -like "*" }
+    $ADs | ForEach-Object{
+        if($_.IsReadOnly){
+            Write-Both "        [!] DC $($_.Name) is a RODC server!";
+        }
+    }
+}
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = Get-Date
@@ -1053,7 +1064,7 @@ Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
 Write-Both "[*] Lang specific variables" ; Get-Variables
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState ; Get-CriticalServicesStatus }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC}
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-PrivilegedGroupAccounts; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
