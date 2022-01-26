@@ -25,6 +25,7 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
   * Get-LastWUDate
   * Get-TimeSource
   * Get-CriticalServicesStatus
+  * Get-RODC
 * Domain Trust Audit
   * Get-DomainTrusts
 * User Accounts Audit
