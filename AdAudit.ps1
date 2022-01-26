@@ -1,7 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
-    v5.2 - Enhanced Get-LAPSStatus. Added support for WS 2022.
+    v5.2 - Enhanced Get-LAPSStatus. Added news checks (AD services + Windows Update + NTP source). Added support for WS 2022. Fix OS version diffence check for WS 2008
     v5.1 - Added check for newly created users and groups. Added check for replication mechanism. Added check for Recycle Bin. Fix ProtectedUsers for WS 2008.
     v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
@@ -59,7 +59,7 @@ param (
 )
 $versionnum = "v5.2"
 
-Function Get-Variables(){#retrieve group names and os version
+Function Get-Variables(){#Retrieve group names and OS version
     $script:OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
     $script:Administrators                 = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
     $script:Users                          = (Get-ADGroup -Identity S-1-5-32-545).SamAccountName
@@ -96,10 +96,10 @@ Function Get-Variables(){#retrieve group names and os version
     Write-Both "    [+] System:  $System"
     Write-Both "    [+] Local Service:  $LocalService"
 }
-Function Write-Both(){#writes to console screen and output file
+Function Write-Both(){#Writes to console screen and output file
     Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"
 }
-Function Write-Nessus-Header(){#creates nessus XML file header
+Function Write-Nessus-Header(){#Creates nessus XML file header
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "<?xml version=`"1.0`" ?><AdAudit>"
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "<Report name=`"$env:ComputerName`" xmlns:cm=`"http://www.nessus.org/cm`">"
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "<ReportHost name=`"$env:ComputerName`"><HostProperties></HostProperties>"
@@ -189,7 +189,7 @@ Function Get-LAPSStatus{#Check for presence of LAPS in domain
         Write-Nessus-Finding "LAPSMissing" "KB258" "LAPS Not Installed in domain"
     }
 }
-Function Get-PrivilegedGroupAccounts{#lists users in Admininstrators, DA and EA groups
+Function Get-PrivilegedGroupAccounts{#Lists users in Admininstrators, DA and EA groups
     [array]$privilegedusers = @()
     $privilegedusers += Get-ADGroupMember $Administrators -Recursive
     $privilegedusers += Get-ADGroupMember $DomainAdmins -Recursive
@@ -208,7 +208,7 @@ Function Get-PrivilegedGroupAccounts{#lists users in Admininstrators, DA and EA 
         Write-Nessus-Finding "AdminSDHolders" "KB426" ([System.IO.File]::ReadAllText("$outputdir\accounts_userPrivileged.txt"))
     }
 }
-Function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and above)
+Function Get-ProtectedUsers{#Lists users in "Protected Users" group (2012R2 and above)
     $DomainLevel = (Get-ADDomain).domainMode
     if ($DomainLevel -eq "Windows2012Domain" -or $DomainLevel -eq "Windows2012R2Domain" -or $DomainLevel -eq "Windows2016Domain"){#Checking for 2012 or above domain functional level
         $ProtectedUsersSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-525"
@@ -230,7 +230,7 @@ Function Get-ProtectedUsers{#lists users in "Protected Users" group (2012R2 and 
     }
     else {Write-Both "    [-] Not Windows 2012 Domain Functional level or above, skipping Get-ProtectedUsers check."}
 }
-Function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies and silos (2012R2 and above)
+Function Get-AuthenticationPoliciesAndSilos {#Lists any authentication policies and silos (2012R2 and above)
     if ([single](Get-WinVersion) -ge [single]6.3){#NT6.2 or greater detected so running this script
         $count = 0
         foreach ($policy in Get-ADAuthenticationPolicy -Filter *) {Write-both "    [!] Found $policy Authentication Policy" ; $count++}
@@ -240,7 +240,7 @@ Function Get-AuthenticationPoliciesAndSilos {#lists any authentication policies 
         if ($count -lt 1){Write-Both "    [!] There were no AD Authentication Policy Silos found in the domain"}
     }
 }
-Function Get-MachineAccountQuota{#get number of machines a user can add to a domain
+Function Get-MachineAccountQuota{#Get number of machines a user can add to a domain
     $MachineAccountQuota = (Get-ADDomain | select -exp DistinguishedName | Get-ADObject -prop 'ms-DS-MachineAccountQuota' | select -exp ms-DS-MachineAccountQuota)
     if ($MachineAccountQuota -gt 0){
         Write-Both "    [!] Domain users can add $MachineAccountQuota devices to the domain! (KB251)"
@@ -273,10 +273,10 @@ Function Get-NULLSessions{
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).RestrictAnonymousSam -eq 0) {Write-Both "    [!] RestrictAnonymousSam is set to 0! (KB81)" ; Write-Nessus-Finding "NullSessions" "KB81" " RestrictAnonymous is set to 0" }
     if ((Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\Lsa).everyoneincludesanonymous -eq 1) {Write-Both "    [!] EveryoneIncludesAnonymous is set to 1! (KB81)" ; Write-Nessus-Finding "NullSessions" "KB81" "EveryoneIncludesAnonymous is set to 1" }
 }
-Function Get-DomainTrusts{#lists domain trusts if they are bad
+Function Get-DomainTrusts{#Lists domain trusts if they are bad
     ForEach ($trust in (Get-ADObject -Filter {objectClass -eq "trustedDomain"} -Properties TrustPartner,TrustDirection,trustType,trustAttributes)){
         if ($trust.TrustDirection -eq 2){
-            if ($trust.TrustAttributes -eq 1 -or $trust.TrustAttributes -eq 4){ # 1 means trust is non-transitive, 4 is external so we check for anything but that
+            if ($trust.TrustAttributes -eq 1 -or $trust.TrustAttributes -eq 4){ #1 means trust is non-transitive, 4 is external so we check for anything but that
                 Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain! (KB250)"
                 Write-Nessus-Finding "DomainTrusts" "KB250" "The domain $($trust.Name) is trusted by $env:UserDomain."}
             else{
@@ -284,7 +284,7 @@ Function Get-DomainTrusts{#lists domain trusts if they are bad
                 Write-Nessus-Finding "DomainTrusts" "KB250" "The domain $($trust.Name) is trusted by $env:UserDomain and it is Transitive!"}
         }
         if ($trust.TrustDirection -eq 3){
-            if ($trust.TrustAttributes -eq 1 -or $trust.TrustAttributes -eq 4){ # 1 means trust is non-transitive, 4 is external so we check for anything but that
+            if ($trust.TrustAttributes -eq 1 -or $trust.TrustAttributes -eq 4){ #1 means trust is non-transitive, 4 is external so we check for anything but that
                 Write-Both "    [!] The domain $($trust.Name) is trusted by $env:UserDomain! (KB250)"
                 Write-Nessus-Finding "DomainTrusts" "KB250" "The domain $($trust.Name) is trusted by $env:UserDomain."}
             else{
@@ -297,8 +297,8 @@ Function Get-WinVersion{
     $WinVersion = [single]([string][environment]::OSVersion.Version.Major + "." + [string][environment]::OSVersion.Version.Minor)
     return [single]$WinVersion
 }
-Function Get-SMB1Support{#check if server supports SMBv1
-    if ([single](Get-WinVersion) -le [single]6.1){# NT6.1 or less detected so checking reg key
+Function Get-SMB1Support{#Check if server supports SMBv1
+    if ([single](Get-WinVersion) -le [single]6.1){#NT6.1 or less detected so checking reg key
         if (!(Get-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).SMB1 -eq 0){
             Write-Both "    [!] SMBv1 is not disabled (KB290)"
             Write-Nessus-Finding "SMBv1Support" "KB290" "SMBv1 is enabled"
@@ -333,7 +333,7 @@ Function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
         Write-Nessus-Finding "krbtgtPasswordNotChanged" "KB253" "krbtgt password not changed since $krbtgtPasswordDate"
     }
 }
-Function Get-GPOtoFile{#oututs complete GPO report
+Function Get-GPOtoFile{#Oututs complete GPO report
     if (Test-Path "$outputdir\GPOReport.html") { Remove-Item "$outputdir\GPOReport.html" -Recurse; }
     Get-GPOReport -All -ReportType HTML -Path "$outputdir\GPOReport.html"
     Write-Both "    [+] GPO Report saved to GPOReport.html"
@@ -355,7 +355,7 @@ Function Get-GPOsPerOU{#Lists all OUs and which GPOs apply to them
    }
    Write-Both "    [+] Inherited GPOs saved to ous_inheritedGPOs.txt"
 }
-Function Get-NTDSdit{#dumps NTDS.dit, SYSTEM and SAM for password cracking
+Function Get-NTDSdit{#Dumps NTDS.dit, SYSTEM and SAM for password cracking
     if (Test-Path "$outputdir\ntds.dit") { Remove-Item "$outputdir\ntds.dit" -Recurse; }
     $outputdirntds='\"' + $outputdir + '\ntds.dit\"'
     $command = "ntdsutil `"ac in ntds`" `"ifm`" `"cr fu $outputdirntds `" q q"
@@ -363,7 +363,7 @@ Function Get-NTDSdit{#dumps NTDS.dit, SYSTEM and SAM for password cracking
     Write-Both "    [+] NTDS.dit, SYSTEM & SAM saved to output folder"
     Write-Both "    [+] Use secretsdump.py -system registry/SYSTEM -ntds Active\ Directory/ntds.dit LOCAL -outputfile customer"
 }
-Function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Get-GPPPassword.ps1)
+Function Get-SYSVOLXMLS{#Finds XML files in SYSVOL (thanks --> https://github.com/PowerShellMafia/PowerSploit/blob/master/Exfiltration/Get-GPPPassword.ps1)
     $XMLFiles = Get-ChildItem -Path "\\$Env:USERDNSDOMAIN\SYSVOL" -Recurse -ErrorAction SilentlyContinue -Include 'Groups.xml','Services.xml','Scheduledtasks.xml','DataSources.xml','Printers.xml','Drives.xml'
     $count = 0
     if ($XMLFiles){
@@ -394,7 +394,7 @@ Function Get-SYSVOLXMLS{#finds XML files in SYSVOL (thanks --> https://github.co
            Write-Nessus-Finding "GPOPasswordStorage" "KB329" "$GPOxml"
            }
 }
-Function Get-InactiveAccounts{#lists accounts not used in past 180 days plus some checks for admin accounts
+Function Get-InactiveAccounts{#Lists accounts not used in past 180 days plus some checks for admin accounts
     $count = 0
     $progresscount = 0
     $inactiveaccounts = Search-ADaccount -AccountInactive -Timespan (New-TimeSpan -Days 180) -UsersOnly | Where-Object {$_.Enabled -eq $true}
@@ -414,7 +414,7 @@ Function Get-InactiveAccounts{#lists accounts not used in past 180 days plus som
         Write-Nessus-Finding "InactiveAccounts" "KB500" ([System.IO.File]::ReadAllText("$outputdir\accounts_inactive.txt"))
     }
 }
-Function Get-AdminAccountChecks{# checks if Administrator account has been renamed, replaced and is no longer used.
+Function Get-AdminAccountChecks{#Checks if Administrator account has been renamed, replaced and is no longer used.
     $AdministratorSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value)+"-500"
     $AdministratorSAMAccountName = (Get-ADUser -Filter {SID -eq $AdministratorSID} -properties SamAccountName).SamAccountName
     if ($AdministratorSAMAccountName -eq "Administrator" -or $AdministratorSAMAccountName -eq "Administrateur"){
@@ -431,7 +431,7 @@ Function Get-AdminAccountChecks{# checks if Administrator account has been renam
         Write-Nessus-Finding "AdminAccountRenamed" "KB309" "UID500 (LocalAdmini) account is still used, last used $AdministratorLastLogonDate"
     }
 }
-Function Get-DisabledAccounts{#lists disabled accounts
+Function Get-DisabledAccounts{#Lists disabled accounts
     $disabledaccounts = Search-ADaccount -AccountDisabled -UsersOnly
     $count = 0
     $totalcount = ($disabledaccounts | Measure-Object | Select-Object Count).count
@@ -447,7 +447,7 @@ Function Get-DisabledAccounts{#lists disabled accounts
         Write-Nessus-Finding "DisabledAccounts" "KB501" ([System.IO.File]::ReadAllText("$outputdir\accounts_disabled.txt"))
     }
 }
-Function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
+Function Get-AccountPassDontExpire{#Lists accounts who's passwords dont expire
     $count = 0
     $nonexpiringpasswords = Search-ADAccount -PasswordNeverExpires -UsersOnly | Where-Object {$_.Enabled -eq $true}
     $totalcount = ($nonexpiringpasswords | Measure-Object | Select-Object Count).count
@@ -462,7 +462,7 @@ Function Get-AccountPassDontExpire{#lists accounts who's passwords dont expire
         Write-Nessus-Finding "AccountsThatDontExpire" "KB254" ([System.IO.File]::ReadAllText("$outputdir\accounts_passdontexpire.txt"))
     }
 }
-Function Get-OldBoxes{#lists server 2000/2003/XP/Vista/7/2008 machines
+Function Get-OldBoxes{#Lists 2000/2003/XP/Vista/7/2008 machines
     $count = 0
     $oldboxes = Get-ADComputer -Filter {OperatingSystem -Like "*2003*" -and Enabled -eq "true" -or OperatingSystem -Like "*XP*" -and Enabled -eq "true" -or OperatingSystem -Like "*2000*" -and Enabled -eq "true" -or OperatingSystem -like '*Windows 7*' -and Enabled -eq "true" -or OperatingSystem -like '*vista*' -and Enabled -eq "true" -or OperatingSystem -like '*2008*' -and Enabled -eq "true"} -Property OperatingSystem
     $totalcount = ($oldboxes | Measure-Object | Select-Object Count).count
@@ -477,7 +477,7 @@ Function Get-OldBoxes{#lists server 2000/2003/XP/Vista/7/2008 machines
         Write-Nessus-Finding "OldBoxes" "KB259" ([System.IO.File]::ReadAllText("$outputdir\machines_old.txt"))
     }
 }
-Function Get-DCsNotOwnedByDA {#searches for DC objects not owned by the Domain Admins group
+Function Get-DCsNotOwnedByDA {#Searches for DC objects not owned by the Domain Admins group
     $count = 0
     $progresscount = 0
     $domaincontrollers = Get-ADComputer -Filter {PrimaryGroupID -eq 516 -or PrimaryGroupID -eq 521} -Property *
@@ -497,7 +497,7 @@ Function Get-DCsNotOwnedByDA {#searches for DC objects not owned by the Domain A
         Write-Nessus-Finding "DCsNotByDA" "KB547" ([System.IO.File]::ReadAllText("$outputdir\dcs_not_owned_by_da.txt"))
     }
 }
-Function Get-HostDetails{#gets basic information about the host
+Function Get-HostDetails{#Gets basic information about the host
     Write-Both "    [+] Device Name:  $env:ComputerName"
     Write-Both "    [+] Domain Name:  $env:UserDomain"
     Write-Both "    [+] User Name:  $env:UserName"
@@ -505,7 +505,7 @@ Function Get-HostDetails{#gets basic information about the host
     $IPAddresses = [net.dns]::GetHostAddresses("")|Select -Expa IP*
     ForEach ($ip in $IPAddresses){Write-Both "    [+] IP Address:  $ip"}
 }
-Function Get-FunctionalLevel{# Gets the functional level for domain and forest
+Function Get-FunctionalLevel{#Gets the functional level for domain and forest
     $DomainLevel = (Get-ADDomain).domainMode
     if ($DomainLevel -eq "Windows2000Domain" -and [single](Get-WinVersion) -gt 5.0){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
     if ($DomainLevel -eq "Windows2003InterimDomain" -and [single](Get-WinVersion) -gt 5.1){Write-Both "    [!] DomainLevel is reduced for backwards compatibility to $DomainLevel!"; Write-Nessus-Finding "FunctionalLevel" "KB546" "DomainLevel is reduced for backwards compatibility to $DomainLevel"}
@@ -736,70 +736,72 @@ Function Get-PrivilegedGroupMembership{#List Domain Admins, Enterprise Admins an
 Function Get-DCEval{#Basic validation of all DCs in forest
     #Collect all DCs in forest
     $Forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest();
-    $ADs = Get-ADDomainController -Filter  { Site -like "*" }
-    #Validatee OS version of DCs
-    if( ( $ads.operatingsystem | select -Unique ).count -eq 1 ){
-        Write-Both "    [+] All DCs are the same OS version of $($ads.operatingsystem | select -Unique)";
+    $ADs    = Get-ADDomainController -Filter { Site -like "*" }
+    #Validate OS version of DCs
+    $osList = @()
+    $ADs | ForEach-Object { $osList += $_.OperatingSystem }
+    if(($osList | sort -Unique | measure).Count -eq 1){
+        Write-Both "    [+] All DCs are the same OS version of $($osList | sort -Unique)";
     }else{
         Write-Both "    [!] Operating system differs across DCs!!!";
-        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2003'} ) -ne $null ){
+        if( ( $ADs | Where-Object {$_.OperatingSystem -Match '2003'} ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2003";
-            $ads | Where-Object {$_.OperatingSystem -Match '2003'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+            $ADs | Where-Object {$_.OperatingSystem -Match '2003'} | ForEach-Object {Write-Both "            [-] $($_.Name) has $($_.OperatingSystem)"};
         }
-        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2008 !(R2)'} ) -ne $null ){
+        if( ( $ADs | Where-Object {$_.OperatingSystem -Match '2008 !(R2)'} ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2008";
-            $ads | Where-Object {$_.OperatingSystem -Match '2008 !(R2)'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+            $ADs | Where-Object {$_.OperatingSystem -Match '2008 !(R2)'} | ForEach-Object {Write-Both "            [-] $($_.Name) has $($_.OperatingSystem)"};
         }
-        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2008 R2'}) -ne $null ){
+        if( ( $ADs | Where-Object {$_.OperatingSystem -Match '2008 R2'}) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2008 R2";
-            $ads | Where-Object {$_.OperatingSystem -Match '2008 R2'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+            $ADs | Where-Object {$_.OperatingSystem -Match '2008 R2'} | ForEach-Object {Write-Both "            [-] $($_.Name) has $($_.OperatingSystem)"};
         }
-        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2012 !(R2)'} ) -ne $null ){
+        if( ( $ADs | Where-Object {$_.OperatingSystem -Match '2012 !(R2)'} ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2012";
-            $ads | Where-Object {$_.OperatingSystem -Match '2012 !(R2)'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+            $ADs | Where-Object {$_.OperatingSystem -Match '2012 !(R2)'} | ForEach-Object {Write-Both "            [-] $($_.Name) has $($_.OperatingSystem)"};
         }
-        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2012 R2'} ) -ne $null ){
+        if( ( $ADs | Where-Object {$_.OperatingSystem -Match '2012 R2'} ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2012 R2";
-            $ads | Where-Object {$_.OperatingSystem -Match '2012 R2'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+            $ADs | Where-Object {$_.OperatingSystem -Match '2012 R2'} | ForEach-Object {Write-Both "            [-] $($_.Name) has $($_.OperatingSystem)"};
         }
-        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2016'} ) -ne $null ){
+        if( ( $ADs | Where-Object {$_.OperatingSystem -Match '2016'} ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2016";
-            $ads | Where-Object {$_.OperatingSystem -Match '2016'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+            $ADs | Where-Object {$_.OperatingSystem -Match '2016'} | ForEach-Object {Write-Both "            [-] $($_.Name) has $($_.OperatingSystem)"};
         }
-        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2019'} ) -ne $null ){
+        if( ( $ADs | Where-Object {$_.OperatingSystem -Match '2019'} ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2019";
-            $ads | Where-Object {$_.OperatingSystem -Match '2019'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+            $ADs | Where-Object {$_.OperatingSystem -Match '2019'} | ForEach-Object {Write-Both "            [-] $($_.Name) has $($_.OperatingSystem)"};
         }
-        if( ( $ads | Where-Object {$_.OperatingSystem -Match '2022'} ) -ne $null ){
+        if( ( $ADs | Where-Object {$_.OperatingSystem -Match '2022'} ) -ne $null ){
             Write-Both "        [+] Domain controllers with WS 2022";
-            $ads | Where-Object {$_.OperatingSystem -Match '2022'} | ForEach-Object {Write-Both "            [-] $($_.Name)"};
+            $ADs | Where-Object {$_.OperatingSystem -Match '2022'} | ForEach-Object {Write-Both "            [-] $($_.Name) has $($_.OperatingSystem)"};
         }
     }
     #Validate DCs hotfix level
-    if( (( $ads | Select-object OperatingSystemHotfix -Unique ) | measure).count -eq 1 -or ( $ads | Select-object OperatingSystemHotfix -Unique ) -eq $null ){
-        Write-Both "    [+] All DCs have the same hotfix of [$($ads | Select-Object OperatingSystemHotFix -Unique | ForEach-Object {$_.OperatingSystemHotfix})]";
+    if( (( $ADs | Select-Object OperatingSystemHotfix -Unique ) | measure).count -eq 1 -or ( $ADs | Select-Object OperatingSystemHotfix -Unique ) -eq $null ){
+        Write-Both "    [+] All DCs have the same hotfix of [$($ADs | Select-Object OperatingSystemHotFix -Unique | ForEach-Object {$_.OperatingSystemHotfix})]";
     }else{
         Write-Both "    [!] Hotfix level differs across DCs!!!";
-        $ads | ForEach-Object {Write-Both "        [-] DC $($_.Name) hotfix [$($_.OperatingSystemHotfix)]"};
+        $ADs | ForEach-Object {Write-Both "        [-] DC $($_.Name) hotfix [$($_.OperatingSystemHotfix)]"};
     }
     #Validate DCs Service Pack level
-    if( (( $ads | Select-object OperatingSystemServicePack -Unique ) | measure).count -eq 1 -or ( $ads | Select-Object OperatingSystemServicePack -Unique ) -eq $null){
-        Write-Both "    [+] All DCs have the same Service Pack of [$($ads | Select-Object OperatingSystemServicePack -Unique | ForEach-Object {$_.OperatingSystemServicePack})]";
+    if( (( $ADs | Select-Object OperatingSystemServicePack -Unique ) | measure).count -eq 1 -or ( $ADs | Select-Object OperatingSystemServicePack -Unique ) -eq $null){
+        Write-Both "    [+] All DCs have the same Service Pack of [$($ADs | Select-Object OperatingSystemServicePack -Unique | ForEach-Object {$_.OperatingSystemServicePack})]";
     }else{
         Write-Both "    [!] Service Pack level differs across DCs!!!";
-        $ads | ForEach-Object {Write-Both "        [-] DC $($_.Name) Service Pack [$($_.OperatingSystemServicePack)]"};
+        $ADs | ForEach-Object {Write-Both "        [-] DC $($_.Name) Service Pack [$($_.OperatingSystemServicePack)]"};
     }
     #Validate DCs OS Version
-    if( (( $ads |  Select-object OperatingSystemVersion -Unique ) | measure).count -eq 1 -or ( $ads | Select-Object OperatingSystemVersion -Unique ) -eq $null){
-        Write-Both "    [+] All DCs have the same OS Version of [$($ads | Select-Object OperatingSystemVersion -Unique | ForEach-Object {$_.OperatingSystemVersion})]";
+    if( (( $ADs |  Select-Object OperatingSystemVersion -Unique ) | measure).count -eq 1 -or ( $ADs | Select-Object OperatingSystemVersion -Unique ) -eq $null){
+        Write-Both "    [+] All DCs have the same OS Version of [$($ADs | Select-Object OperatingSystemVersion -Unique | ForEach-Object {$_.OperatingSystemVersion})]";
     }else{
         Write-Both "    [!] OS Version differs across DCs!!!";
-        $ads | ForEach-Object {Write-Both "        [-] DC $($_.Name) OS Version [$($_.OperatingSystemVersion)]"};
+        $ADs | ForEach-Object {Write-Both "        [-] DC $($_.Name) OS Version [$($_.OperatingSystemVersion)]"};
     }
     #List sites without GC
     $SitesWithNoGC = $false;
     foreach($Site in $Forest.Sites){
-        if(($ads | Where-Object {$_.Site -eq $Site.Name} | Where-Object {$_.IsGlobalCatalog -eq $True}) -eq $null) {$SitesWithNoGC = $true;Add-Content -Path "$outputdir\sites_no_gc.txt" -Value "$($Site.Name)"; }
+        if(($ADs | Where-Object {$_.Site -eq $Site.Name} | Where-Object {$_.IsGlobalCatalog -eq $True}) -eq $null) {$SitesWithNoGC = $true;Add-Content -Path "$outputdir\sites_no_gc.txt" -Value "$($Site.Name)"; }
     }
     if($SitesWithNoGC -eq $true){
         Write-Both "    [!] You have sites with no Global Catalog!";
@@ -809,9 +811,9 @@ Function Get-DCEval{#Basic validation of all DCs in forest
         Write-Both "    [!] DC $($ADs | Where-Object {$_.OperationMasterRoles -ne $null} | select -ExpandProperty hostname) holds all FSMO roles!";
     }
     #DCs with weak Kerberos algorhythm (*CH* Changed below to look for msDS-SupportedEncryptionTypes to work with 2008R2)
-    $ADcomputers = $ads | ForEach-Object {Get-ADComputer $_.Name -Properties msDS-SupportedEncryptionTypes};
+    $ADcomputers = $ADs | ForEach-Object {Get-ADComputer $_.Name -Properties msDS-SupportedEncryptionTypes};
     $WeakKerberos = $false;
-    foreach($DC in $ADcomputers){# (*CH* Need to define all combinations here, only done 28 and 31 so far) (31 = "DES, RC4, AES128, AES256", 28 = "RC4, AES128, AES256")
+    foreach($DC in $ADcomputers){#(*CH* Need to define all combinations here, only done 28 and 31 so far) (31 = "DES, RC4, AES128, AES256", 28 = "RC4, AES128, AES256")
         if( $DC."msDS-SupportedEncryptionTypes" -eq 28 -or $DC."msDS-SupportedEncryptionTypes" -eq 31 ){
             $WeakKerberos = $true;
             Add-Content -Path "$outputdir\dcs_weak_kerberos_ciphersuite.txt" -Value "$($DC.DNSHostName) $($dc."msDS-SupportedEncryptionTypes")";
@@ -843,7 +845,7 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
             }
         }
     }
-    #batch logon
+    #Batch logon
     $permissionindex = $GPOreport.IndexOf('SeBatchLogonRight');
     if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
         $xmlreport = [xml]$GPOreport;
@@ -865,7 +867,7 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
             }
         }
     }
-    #backup
+    #Backup
     $permissionindex = $GPOreport.IndexOf('SeBackupPrivilege');
     if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
         $xmlreport = [xml]$GPOreport;
@@ -876,7 +878,7 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
             }
         }
     }
-    #restore
+    #Restore
     $permissionindex = $GPOreport.IndexOf('SeRestorePrivilege');
     if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
         $xmlreport = [xml]$GPOreport;
@@ -887,7 +889,7 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
             }
         }
     }
-    #load driver
+    #Load driver
     $permissionindex = $GPOreport.IndexOf('SeLoadDriverPrivilege');
     if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
         $xmlreport = [xml]$GPOreport;
@@ -898,7 +900,7 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
             }
         }
     }
-    #local shutdown
+    #Local shutdown
     $permissionindex = $GPOreport.IndexOf('SeShutdownPrivilege');
     if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
         $xmlreport = [xml]$GPOreport;
@@ -909,7 +911,7 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
             }
         }
     }
-    #remote shutdown
+    #Remote shutdown
     $permissionindex = $GPOreport.IndexOf('SeRemoteShutdownPrivilege');
     if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
         $xmlreport = [xml]$GPOreport;
@@ -920,7 +922,7 @@ Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controlle
             }
         }
     }
-    #change time
+    #Change time
     $permissionindex = $GPOreport.IndexOf('SeSystemTimePrivilege');
     if($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy'){
         $xmlreport = [xml]$GPOreport;
@@ -978,6 +980,58 @@ Function Get-RecycleBinState {#Check if recycle bin is enabled
         Write-Both "    [!] Recycle Bin is disabled in the domain, you should consider enabling it!"
     }
 }
+Function Get-CriticalServicesStatus{#Check AD services status
+    Write-Both "    [+] Checking services on all DCs"
+    $dcList = @()
+    (Get-ADDomainController -Filter *) | ForEach-Object{$dcList+=$_.Name}
+    $objectName   = "DFSR-GlobalSettings"
+    $searcher     = [ADSISearcher] "(objectClass=msDFSR-GlobalSettings)"
+    $objectExists = $searcher.FindOne() -ne $null
+    if ($objectExists){
+        $services = @("dns","netlogon","kdc","w32time","ntds","dfsr")
+    }else{
+        $services = @("dns","netlogon","kdc","w32time","ntds","ntfrs")
+    }
+    foreach ($DC in $dcList){
+        foreach ($service in $services){
+            $checkService  = Get-Service $service -ComputerName $DC
+            $serviceName   = $checkService.Name
+            $serviceStatus = $checkService.Status
+            if ($serviceStatus -ne "Running"){
+                Write-Both "        [!] Service $($checkService.Name) is not running on $DC!"
+            }
+        }
+    }
+}
+Function Get-LastWUDate{#Check Windows update status and last install date
+    $dcList = @()
+    (Get-ADDomainController -Filter *) | ForEach-Object{$dcList+=$_.Name}
+    $lastMonth = (Get-Date).AddDays(-30)
+    Write-Host "    [+] Checking Windows Update"
+    foreach ($DC in $dcList){
+        $startMode = (Get-WmiObject -ComputerName $DC -Class Win32_Service -Property StartMode -Filter "Name='wuauserv'").StartMode
+        if($startMode -eq "Disabled"){
+            Write-Host "        [!] Windows Update service is disabled on $DC!"
+        }
+    }
+    foreach ($DC in $dcList){
+        $lastHotfix = (Get-HotFix -ComputerName $DC | Where-Object {$_.InstalledOn -ne $null} | Sort-Object -Descending InstalledOn  | Select-Object -First 1).InstalledOn
+        if($lastHotfix -lt $lastMonth){
+            Write-Host "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
+        }else{
+            Write-Host "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
+        }
+    }
+}
+Function Get-TimeSource {#Get NTP sync source
+    $dcList = @()
+    (Get-ADDomainController -Filter *) | ForEach-Object{$dcList+=$_.Name}
+    Write-Host "    [+] Checking NTP configuration"
+    foreach ($DC in $dcList){
+        $ntpSource = w32tm /query /source /computer:$DC
+        Write-Host "        [+] $DC is syncing time from $ntpSource"
+    }
+}
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = Get-Date
@@ -999,7 +1053,7 @@ Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
 Write-Both "[*] Lang specific variables" ; Get-Variables
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
-if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-DCEval ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState }
+if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState ; Get-CriticalServicesStatus }
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
 if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-PrivilegedGroupAccounts; Get-ProtectedUsers }
 if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
