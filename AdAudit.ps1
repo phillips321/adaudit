@@ -1,7 +1,7 @@
 <#
 phillips321.co.uk ADAudit.ps1
 Changelog:
-    v5.2 - Enhanced Get-LAPSStatus. Added news checks (AD services + Windows Update + NTP source + Computer container + RODC). Added support for WS 2022. Fix OS version difference check for WS 2008.
+    v5.2 - Enhanced Get-LAPSStatus. Added news checks (AD services + Windows Update + NTP source + Computer container + RODC + Locked accoutns + Password Quality). Added support for WS 2022. Fix OS version difference check for WS 2008.
     v5.1 - Added check for newly created users and groups. Added check for replication mechanism. Added check for Recycle Bin. Fix ProtectedUsers for WS 2008.
     v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
     v4.9 - Bug fix in checking password comlexity
@@ -42,6 +42,7 @@ ToDo:
 #>
 [cmdletbinding()]
 param (
+    [switch]$installdeps = $false,
     [switch]$hostdetails = $false,
     [switch]$domainaudit = $false,
     [switch]$trusts = $false,
@@ -438,13 +439,26 @@ Function Get-DisabledAccounts{#Lists disabled accounts
     ForEach ($account in $disabledaccounts){
         if ($totalcount -eq 0) {break}
         Write-Progress -Activity "Searching for disabled users..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
-        if ($account.LastLogonDate){$userlastused = $account.LastLogonDate} else {$userlastused = "Never"}
         Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is disabled"
         $count++
     }
     if ($count -gt 0){
         Write-Both "    [!] $count disabled user accounts, see accounts_disabled.txt (KB501)"
         Write-Nessus-Finding "DisabledAccounts" "KB501" ([System.IO.File]::ReadAllText("$outputdir\accounts_disabled.txt"))
+    }
+}
+Function Get-LockedAccounts{#Lists locked accounts
+    $lockedAccounts = Get-ADUser -Filter * -Properties LockedOut | Where-Object {$_.LockedOut -eq $true}
+    $count = 0
+    $totalcount = ($lockedAccounts | Measure-Object | Select-Object Count).Count
+    ForEach ($account in $lockedAccounts){
+        if ($totalcount -eq 0) {break}
+        Write-Progress -Activity "Searching for locked users..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
+        Add-Content -Path "$outputdir\accounts_locked.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is locked"
+        $count++
+    }
+    if ($count -gt 0){
+        Write-Both "    [!] $count locked user accounts, see accounts_locked.txt"
     }
 }
 Function Get-AccountPassDontExpire{#Lists accounts who's passwords dont expire
@@ -1043,6 +1057,36 @@ Function Get-RODC{#Check for RODC
         }
     }
 }
+Function Install-Dependencies{#Install DSInternals
+    if ($PSVersionTable.PSVersion.Major -ge 5){
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor
+        [Net.SecurityProtocolType]::Tls12
+        if (!(Get-PackageProvider -ListAvailable -Name Nuget -ErrorAction SilentlyContinue)){ Install-PackageProvider -Name NuGet -Force | Out-Null }
+        if ((Get-PSRepository -Name PSGallery).InstallationPolicy -eq "Untrusted"){ Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted }
+        if (!(Get-Module -ListAvailable -Name DSInternals)){ Install-Module -Name DSInternals -Force }
+    }else{
+        Write-Both "    [!] PowerShell 5 or greater is needed, see https://www.microsoft.com/en-us/download/details.aspx?id=54616"
+    }
+}
+Function Remove-StringLatinCharacters{#Removes latin characters
+    PARAM ([string]$String)
+    [Text.Encoding]::ASCII.GetString([Text.Encoding]::GetEncoding("Cyrillic").GetBytes($String))
+}
+Function Get-PasswordQuality{#Use DSInternals to evaluate password quality
+    if (Get-Module -ListAvailable -Name DSInternals){
+        $totalSite = (Get-ADObject -Filter {objectClass -like "site" } -SearchBase (Get-ADRootDSE).ConfigurationNamingContext | measure).Count
+        $count = 0
+        Get-ADObject -Filter {objectClass -like "site" } -SearchBase (Get-ADRootDSE).ConfigurationNamingContext | ForEach-Object{
+            if ($_.Name -eq $(Remove-StringLatinCharacters $_.Name)){ $count++ }
+        }
+        if ($count -ne $totalSite){
+            Write-Both "    [!] One or more site have illegal characters in their name, can't get password quality!"
+        }else{
+            Get-ADReplAccount -All -Server $env:ComputerName -NamingContext $(Get-ADDomain | select -exp DistinguishedName) | Test-PasswordQuality -IncludeDisabledAccounts | Out-File "$outputdir\password_quality.txt"
+            Write-Both "    [!] Password quality test done, see $outputdir\password_quality.txt";
+        }
+    }
+}
 
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = Get-Date
@@ -1056,18 +1100,20 @@ $versionnum                  by phillips321
 "
 $running=$false
 Write-Both "[*] Script start time $starttime"
-if (Get-Module -ListAvailable -Name ActiveDirectory){Import-Module ActiveDirectory} else {write-host "[!] ActiveDirectory module not installed, exiting..." ; exit}
-if (Get-Module -ListAvailable -Name ServerManager){Import-Module ServerManager} else {write-host "[!] ServerManager module not installed, exiting..." ; exit}
-if (Get-Module -ListAvailable -Name GroupPolicy){Import-Module GroupPolicy} else {write-host "[!] GroupPolicy module not installed, exiting..." ; exit}
+if (Get-Module -ListAvailable -Name ActiveDirectory){Import-Module ActiveDirectory} else {Write-Host "[!] ActiveDirectory module not installed, exiting..." ; exit}
+if (Get-Module -ListAvailable -Name ServerManager){Import-Module ServerManager} else {Write-Host "[!] ServerManager module not installed, exiting..." ; exit}
+if (Get-Module -ListAvailable -Name GroupPolicy){Import-Module GroupPolicy} else {Write-Host "[!] GroupPolicy module not installed, exiting..." ; exit}
+if (Get-Module -ListAvailable -Name DSInternals){Import-Module DSInternals} else {Write-Host -ForegroundColor Yellow "[!] DSInternals module not installed, use -installdeps to force install"}
 if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\adaudit.nessus" | Out-Null }
 Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
 Write-Both "[*] Lang specific variables" ; Get-Variables
+if ($installdeps) { $running=$true; Write-Both "[*] Installing optionnal features" ; Install-Dependencies }
 if ($hostdetails -Or $all) { $running=$true; Write-Both "[*] Device Information" ; Get-HostDetails }
 if ($domainaudit -Or $all) { $running=$true; Write-Both "[*] Domain Audit" ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC}
 if ($trusts -Or $all) { $running=$true; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
-if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-PrivilegedGroupAccounts; Get-ProtectedUsers }
-if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy }
+if ($accounts -Or $all) { $running=$true; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-LockedAccounts ; Get-AdminAccountChecks ; Get-NULLSessions; Get-PrivilegedGroupAccounts; Get-ProtectedUsers }
+if ($passwordpolicy -Or $all) { $running=$true; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently; Get-PasswordPolicy ; Get-PasswordQuality}
 if ($ntds -Or $all) { $running=$true; Write-Both "[*] Trying to save NTDS.dit, please wait..."; Get-NTDSdit }
 if ($oldboxes -Or $all) { $running=$true; Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes }
 if ($gpo -Or $all) { $running=$true; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"  ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS; Get-GPOEnum }
@@ -1078,6 +1124,7 @@ if ($insecurednszone -Or $all) { $running=$true; Write-Both "[*] Check For Exist
 if ($recentchanges -Or $all) { $running=$true; Write-Both "[*] Check For newly created users and groups" ; Get-RecentChanges }
 if (!$running) { Write-Both "[!] No arguments selected;"
     Write-Both "[!] Other options are as follows, they can be used in combination"
+    Write-Both "    -installdeps installs optionnal features (DSInternals)"
     Write-Both "    -hostdetails retrieves hostname and other useful audit info"
     Write-Both "    -domainaudit retrieves information about the AD such as functional level"
     Write-Both "    -trusts retrieves information about any doman trusts"
