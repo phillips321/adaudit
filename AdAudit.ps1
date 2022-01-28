@@ -1,44 +1,119 @@
 <#
-phillips321.co.uk ADAudit.ps1
-Changelog:
-    v5.2 - Enhanced Get-LAPSStatus. Added news checks (AD services + Windows Update + NTP source + Computer container + RODC + Locked accounts + Password Quality). Added support for WS 2022. Fix OS version difference check for WS 2008.
-    v5.1 - Added check for newly created users and groups. Added check for replication mechanism. Added check for Recycle Bin. Fix ProtectedUsers for WS 2008.
-    v5.0 - Make the script compatible with other language than English. Fix the cpassword search in GPO. Fix Get-ACL bad syntax error. Fix Get-DNSZoneInsecure for WS 2008.
-    v4.9 - Bug fix in checking password comlexity
-    v4.8 - Added checks for vista, win7 and 2008 old operating systems. Added insecure DNS zone checks.
-    v4.7 - Added powershel-v2 suport and fixed array issue
-    v4.6 - Fixed potential division by zero
-    v4.5 - PR to resolve count issue when count = 1
-    v4.4 - Reinstated nessus fix and put output in a list for findings, changed Get-AdminSDHolders with Get-PrivilegedGroupAccounts
-    v4.3 - Temp fix with nessus output
-    v4.2 - Bug fix on cpassword count
-    v4.1 - Loads of fixes. Works with Powershellv2 again now, filtered out disabled accounts, improved domain trusts checking, ouperms improvements and filtering, check for w2k, fixed typos/spelling and various other fixes.
-    v4.0 - Added XML output for import to CheckSecCanopy
-    v3.5 - Added KB more references for internal use
-    v3.4 - Added KB references for internal use
-    v3.3 - Added a greater level of accuracy to Inactive Accounts (thanks exceedio)
-    v3.2 - Added search for DCs not owned by Domain Admins group
-    v3.1 - Added progress to functions that have count, added check for transitive trusts
-    v3.0 - Added ability to choose functions before runtime, cleaned up get-ouperms output
-    v2.5 - Bug fixes to version check for 2012R2 or greater specific checks
-    v2.4 - Forked project. Added Get-OUPerms. Get-LAPSStatus, Get-AdminSDHolders, Get-ProtectedUsers and Get-AuthenticationPoliciesAndSilos functions. Also added FineGrainedPasswordPolicies to Get-PasswordPolicy and changed order slightly
-    v2.3 - Added more useful user output to .txt files (Cheers DK)
-    v2.2 - Minor typo fix
-    v2.1 - Added check for null sessions
-    v2.0 - Multiple Additions and knocked off lots of the todo list
-    v1.9 - Fixed bug, that used Administrator account name instead of UID 500 and a bug with inactive accounts timespan
-    v1.8 - Added check for last time 'Administrator' account logged on.
-    v1.6 - Added Get-FunctionalLevel and krbtgt password last changed check
-    v1.5 - Added Get-HostDetails to output simple info like username, hostname, etc...
-    v1.4 - Added Get-WinVersion version to assist with some checks (SMBv1 currently)
-    v1.3 - Added XML output for GPO (for offline processing using grouper https://github.com/l0ss/Grouper/blob/master/grouper.psm1)
-    v1.2 - Added check for modules
-    v1.1 - Fixed bug where SYSVOL research returns empty
-    v1.0 - First release
-ToDo:
-    Inactive domain trusts
-    Accounts with sid history matching the domain
-    DCs with null session Enabled
+    .NOTES
+        Author       : phillips321.co.uk
+        Creation Date: 04/20/2018
+        Script Name  : ADAudit.ps1
+    .SYNOPSIS
+        PowerShell Script to perform a quick AD audit
+    .DESCRIPTION
+        o Compatibility :
+            * PowerShell v2.0 (PowerShell 5.0 needed if you intend to use DSInternals PowerShell module)
+            * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
+            * All languages (you may need to adjust $AdministratorTranslation variable)
+        o Changelog :
+            [x] Version 5.2 - 01/28/2022
+                * Enhanced Get-LAPSStatus
+                * Added news checks (AD services + Windows Update + NTP source + Computer container + RODC + Locked accounts + Password Quality)
+                * Added support for WS 2022
+                * Fix OS version difference check for WS 2008
+                * Fix Write-Progress not disappearing when done
+            [ ] Version 5.1
+                * Added check for newly created users and groups
+                * Added check for replication mechanism
+                * Added check for Recycle Bin
+                * Fix ProtectedUsers for WS 2008
+            [ ] Version 5.0
+                * Make the script compatible with other language than English
+                * Fix the cpassword search in GPO
+                * Fix Get-ACL bad syntax error
+                * Fix Get-DNSZoneInsecure for WS 2008
+            [ ] Version 4.9
+                * Bug fix in checking password comlexity
+            [ ] Version 4.8
+                * Added checks for vista, win7 and 2008 old operating systems
+                * Added insecure DNS zone checks
+            [ ] Version 4.7
+                * Added powershel-v2 suport and fixed array issue
+            [ ] Version 4.6
+                * Fixed potential division by zero
+            [ ] Version 4.5
+                * PR to resolve count issue when count = 1
+            [ ] Version 4.4
+                * Reinstated nessus fix and put output in a list for findings
+                * Changed Get-AdminSDHolders with Get-PrivilegedGroupAccounts
+            [ ] Version 4.3
+                * Temp fix with nessus output
+            [ ] Version 4.2
+                * Bug fix on cpassword count
+            [ ] Version 4.1
+                * Loads of fixes
+                * Works with Powershellv2 again now
+                * Filtered out disabled accounts
+                * Improved domain trusts checking
+                * OUperms improvements and filtering
+                * Check for w2k
+                * Fixed typos/spelling and various other fixes
+            [ ] Version 4.0
+                * Added XML output for import to CheckSecCanopy
+            [ ] Version 3.5
+                * Added KB more references for internal use
+            [ ] Version 3.4
+                * Added KB references for internal use
+            [ ] Version 3.3
+                * Added a greater level of accuracy to Inactive Accounts (thanks exceedio)
+            [ ] Version 3.2
+                * Added search for DCs not owned by Domain Admins group
+            [ ] Version 3.1
+                * Added progress to functions that have count
+                * Added check for transitive trusts
+            [ ] Version 3.0
+                * Added ability to choose functions before runtime
+                * Cleaned up get-ouperms output
+            [ ] Version 2.5
+                * Bug fixes to version check for 2012R2 or greater specific checks
+            [ ] Version 2.4
+                * Forked project
+                * Added Get-OUPerms, Get-LAPSStatus, Get-AdminSDHolders, Get-ProtectedUsers and Get-AuthenticationPoliciesAndSilos functions
+                * Also added FineGrainedPasswordPolicies to Get-PasswordPolicy and changed order slightly
+            [ ] Version 2.3
+                * Added more useful user output to .txt files (Cheers DK)
+            [ ] Version 2.2
+                * Minor typo fix
+            [ ] Version 2.1
+                * Added check for null sessions
+            [ ] Version 2.0
+                * Multiple Additions and knocked off lots of the todo list
+            [ ] Version 1.9
+                * Fixed bug, that used Administrator account name instead of UID 500 and a bug with inactive accounts timespan
+            [ ] Version 1.8
+                * Added check for last time 'Administrator' account logged on
+            [ ] Version 1.6
+                * Added Get-FunctionalLevel and krbtgt password last changed check
+            [ ] Version 1.5
+                * Added Get-HostDetails to output simple info like username, hostname, etc...
+            [ ] Version 1.4
+                * Added Get-WinVersion version to assist with some checks (SMBv1 currently)
+            [ ] Version 1.3
+                * Added XML output for GPO (for offline processing using grouper https://github.com/l0ss/Grouper/blob/master/grouper.psm1)
+            [ ] Version 1.2
+                * Added check for modules
+            [ ] Version 1.1
+                * Fixed bug where SYSVOL research returns empty
+            [ ] Version 1.0
+                * First release
+    .EXAMPLE
+        PS> ADAudit.ps1 -installdeps -all
+        Install external features and launch all checks
+    .EXAMPLE
+        PS> ADAudit.ps1 -all
+        Launch all checks (but do not install external modules)
+    .EXAMPLE
+        PS> ADAudit.ps1 -installdeps
+        Installs optionnal features (DSInternals)
+    .EXAMPLE
+        PS> ADAudit.ps1 -hostdetails -domainaudit
+        Retrieves hostname and other useful audit info
+        Retrieves information about the AD such as functional level
 #>
 [CmdletBinding()]
 Param (
@@ -58,8 +133,8 @@ Param (
     [switch]$recentchanges   = $false,
     [switch]$all             = $false
 )
-$versionnum = "v5.2"
-$AdministratorTranslation = @("Administrator","Administrateur","Administrador")#If missing put the Administrator name for your own language
+$versionnum               = "v5.2"
+$AdministratorTranslation = @("Administrator","Administrateur","Administrador")#If missing put the default Administrator name for your own language here
 
 Function Get-Variables(){#Retrieve group names and OS version
     $script:OSVersion                      = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
@@ -85,21 +160,22 @@ Function Get-Variables(){#Retrieve group names and OS version
     $script:AuthenticatedUsers             = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:System                         = $SystemSID.Translate([System.Security.Principal.NTAccount]).Value
     $script:LocalService                   = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
-    Write-Both "    [+] Administrators:  $Administrators"
-    Write-Both "    [+] Users:  $Users"
-    Write-Both "    [+] Domain Admins:  $DomainAdmins"
-    Write-Both "    [+] Domain Users:  $DomainUsers"
-    Write-Both "    [+] Domain Controllers:  $DomainControllers"
-    Write-Both "    [+] Schema Admins:  $SchemaAdmins"
-    Write-Both "    [+] Enterprise Admins:  $EnterpriseAdmins"
-    Write-Both "    [+] Every One:  $EveryOne"
-    Write-Both "    [+] Entreprise Domain Controllers:  $EntrepriseDomainControllers"
-    Write-Both "    [+] Authenticated Users:  $AuthenticatedUsers"
-    Write-Both "    [+] System:  $System"
-    Write-Both "    [+] Local Service:  $LocalService"
+    Write-Both "    [+] Administrators               : $Administrators"
+    Write-Both "    [+] Users                        : $Users"
+    Write-Both "    [+] Domain Admins                : $DomainAdmins"
+    Write-Both "    [+] Domain Users                 : $DomainUsers"
+    Write-Both "    [+] Domain Controllers           : $DomainControllers"
+    Write-Both "    [+] Schema Admins                : $SchemaAdmins"
+    Write-Both "    [+] Enterprise Admins            : $EnterpriseAdmins"
+    Write-Both "    [+] Every One                    : $EveryOne"
+    Write-Both "    [+] Entreprise Domain Controllers: $EntrepriseDomainControllers"
+    Write-Both "    [+] Authenticated Users          : $AuthenticatedUsers"
+    Write-Both "    [+] System                       : $System"
+    Write-Both "    [+] Local Service                : $LocalService"
 }
 Function Write-Both(){#Writes to console screen and output file
-    Write-Host "$args"; Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"
+    Write-Host "$args"
+    Add-Content -Path "$outputdir\consolelog.txt" -Value "$args"
 }
 Function Write-Nessus-Header(){#Creates nessus XML file header
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "<?xml version=`"1.0`" ?><AdAudit>"
@@ -149,10 +225,12 @@ Function Get-OUPerms{#Check for non-standard perms for authenticated users, doma
             $output = (Get-Acl AD:$object).Access                                                                    | Where-Object {($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users")} | Where-Object {($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny')}
         }
         if($output -ne $null){
-                $count++ ; Add-Content -Path "$outputdir\ou_permissions.txt" -Value "OU: $object"
+                $count++
+                Add-Content -Path "$outputdir\ou_permissions.txt" -Value "OU: $object"
                 Add-Content -Path "$outputdir\ou_permissions.txt" -Value "[!] Rights: $($output.IdentityReference) $($output.ActiveDirectoryRights) $($output.AccessControlType)"
         }
     }
+    Write-Progress -Activity "Searching for non standard permissions for authenticated users..." -Status "Ready" -Completed
     if($count -gt 0){
         Write-Both "    [!] Issue identified, see $outputdir\ou_permissions.txt"
         Write-Nessus-Finding "OUPermissions" "KB551" ([System.IO.File]::ReadAllText("$outputdir\ou_permissions.txt"))
@@ -210,6 +288,7 @@ Function Get-PrivilegedGroupAccounts{#Lists users in Admininstrators, DA and EA 
         Add-Content -Path "$outputdir\accounts_userPrivileged.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
+    Write-Progress -Activity "Searching for users who are in privileged groups..." -Status "Ready" -Completed
     if($count -gt 0){
         Write-Both "    [!] There are $count accounts in privileged groups, see accounts_userPrivileged.txt (KB426)"
         Write-Nessus-Finding "AdminSDHolders" "KB426" ([System.IO.File]::ReadAllText("$outputdir\accounts_userPrivileged.txt"))
@@ -225,11 +304,12 @@ Function Get-ProtectedUsers{#Lists users in "Protected Users" group (2012R2 and 
         $totalcount        = ($protectedaccounts | Measure-Object | Select-Object Count).count
         foreach($members in $protectedaccounts){
             if($totalcount -eq 0){ break }
-            Write-Progress -Activity "Searching for ptoected users..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
+            Write-Progress -Activity "Searching for protected users..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount*100)
             $account = Get-ADObject $members -Properties SamAccountName
             Add-Content -Path "$outputdir\accounts_protectedusers.txt" -Value "$($account.SamAccountName) ($($account.Name))"
             $count++
         }
+        Write-Progress -Activity "Searching for protected users..." -Status "Ready" -Completed
         if($count -gt 0){
             Write-Both "    [!] There are $count accounts in the 'Protected Users' group, see accounts_protectedusers.txt"
             Write-Nessus-Finding "ProtectedUsers" "KB549" ([System.IO.File]::ReadAllText("$outputdir\accounts_protectedusers.txt"))
@@ -296,7 +376,8 @@ Function Get-PasswordPolicy{
     Write-Both "    [-] Finished checking default password policy"
     Write-Both "    [+] Checking fine-grained password policies if they exist"
     foreach($finegrainedpolicy in Get-ADFineGrainedPasswordPolicy -Filter *){
-        $finegrainedpolicyappliesto=$finegrainedpolicy.AppliesTo; Write-Both "    [!] Policy: $finegrainedpolicy"
+        $finegrainedpolicyappliesto=$finegrainedpolicy.AppliesTo
+        Write-Both "    [!] Policy: $finegrainedpolicy"
         Write-Both "    [!] AppliesTo: $($finegrainedpolicyappliesto)"
         if(!($finegrainedpolicy).PasswordComplexity){
             Write-Both "    [!] Password Complexity not enabled (KB262)"
@@ -392,6 +473,7 @@ Function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
         Add-Content -Path "$outputdir\accounts_with_old_passwords.txt" -Value "User $($account.SamAccountName) ($($account.Name)) has not changed their password since $datelastchanged"
         $count++
     }
+    Write-Progress -Activity "Searching for passwords older than 90days..." -Status "Ready" -Completed
     if($count -gt 0){
         Write-Both "    [!] $count accounts with passwords older than 90days, see accounts_with_old_passwords.txt (KB550)"
         Write-Nessus-Finding "AccountsWithOldPasswords" "KB550" ([System.IO.File]::ReadAllText("$outputdir\accounts_with_old_passwords.txt"))
@@ -403,10 +485,10 @@ Function Get-UserPasswordNotChangedRecently{#Reports users that haven't changed 
     }
 }
 Function Get-GPOtoFile{#Outputs complete GPO report
-    if(Test-Path "$outputdir\GPOReport.html"){ Remove-Item "$outputdir\GPOReport.html" -Recurse; }
+    if(Test-Path "$outputdir\GPOReport.html"){ Remove-Item "$outputdir\GPOReport.html" -Recurse }
     Get-GPOReport -All -ReportType HTML -Path "$outputdir\GPOReport.html"
     Write-Both "    [+] GPO Report saved to GPOReport.html"
-    if(Test-Path "$outputdir\GPOReport.xml"){ Remove-Item "$outputdir\GPOReport.xml" -Recurse; }
+    if(Test-Path "$outputdir\GPOReport.xml"){ Remove-Item "$outputdir\GPOReport.xml" -Recurse }
     Get-GPOReport -All -ReportType XML -Path "$outputdir\GPOReport.xml"
     Write-Both "    [+] GPO Report saved to GPOReport.xml, now run Grouper offline using the following command (KB499)"
     Write-Both "    [+]     PS>Import-Module Grouper.psm1 ; Invoke-AuditGPOReport -Path C:\GPOReport.xml -Level 3"
@@ -422,10 +504,11 @@ Function Get-GPOsPerOU{#Lists all OUs and which GPOs apply to them
         Add-Content -Path "$outputdir\ous_inheritedGPOs.txt" -Value "$($ouobject.Name) Inherits these GPOs: $combinedgpos"
         $count++
    }
+   Write-Progress -Activity "Identifying which GPOs apply to which OUs..." -Status "Ready" -Completed
    Write-Both "    [+] Inherited GPOs saved to ous_inheritedGPOs.txt"
 }
 Function Get-NTDSdit{#Dumps NTDS.dit, SYSTEM and SAM for password cracking
-    if(Test-Path "$outputdir\ntds.dit"){ Remove-Item "$outputdir\ntds.dit" -Recurse; }
+    if(Test-Path "$outputdir\ntds.dit"){ Remove-Item "$outputdir\ntds.dit" -Recurse }
     $outputdirntds = '\"' + $outputdir + '\ntds.dit\"'
     $command       = "ntdsutil `"ac in ntds`" `"ifm`" `"cr fu $outputdirntds `" q q"
     $hide          = cmd.exe /c "$command" 2>&1
@@ -453,6 +536,7 @@ Function Get-SYSVOLXMLS{#Finds XML files in SYSVOL (thanks --> https://github.co
                 $count++
             }
         }
+        Write-Progress -Activity "Searching SYSVOL *.xmls for cpassword..." -Status "Ready" -Completed
     }
     if($count -eq 0){
         Write-Both "    ...cpassword not found in the $($XMLFiles.count) XML files found."
@@ -482,6 +566,7 @@ Function Get-InactiveAccounts{#Lists accounts not used in past 180 days plus som
             $count++
         }
     }
+    Write-Progress -Activity "Searching for inactive users..." -Status "Ready" -Completed
     if($count -gt 0){
         Write-Both "    [!] $count inactive user accounts(180days), see accounts_inactive.txt (KB500)"
         Write-Nessus-Finding "InactiveAccounts" "KB500" ([System.IO.File]::ReadAllText("$outputdir\accounts_inactive.txt"))
@@ -520,6 +605,7 @@ Function Get-DisabledAccounts{#Lists disabled accounts
         Add-Content -Path "$outputdir\accounts_disabled.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is disabled"
         $count++
     }
+    Write-Progress -Activity "Searching for disabled users..." -Status "Ready" -Completed
     if($count -gt 0){
         Write-Both "    [!] $count disabled user accounts, see accounts_disabled.txt (KB501)"
         Write-Nessus-Finding "DisabledAccounts" "KB501" ([System.IO.File]::ReadAllText("$outputdir\accounts_disabled.txt"))
@@ -535,6 +621,7 @@ Function Get-LockedAccounts{#Lists locked accounts
         Add-Content -Path "$outputdir\accounts_locked.txt" -Value "Account $($account.SamAccountName) ($($account.Name)) is locked"
         $count++
     }
+    Write-Progress -Activity "Searching for locked users..." -Status "Ready" -Completed
     if($count -gt 0){
         Write-Both "    [!] $count locked user accounts, see accounts_locked.txt"
     }
@@ -549,6 +636,7 @@ Function Get-AccountPassDontExpire{#Lists accounts who's passwords dont expire
         Add-Content -Path "$outputdir\accounts_passdontexpire.txt" -Value "$($account.SamAccountName) ($($account.Name))"
         $count++
     }
+    Write-Progress -Activity "Searching for users with passwords that dont expire..." -Status "Ready" -Completed
     if($count -gt 0){
         Write-Both "    [!] There are $count accounts that don't expire, see accounts_passdontexpire.txt (KB254)"
         Write-Nessus-Finding "AccountsThatDontExpire" "KB254" ([System.IO.File]::ReadAllText("$outputdir\accounts_passdontexpire.txt"))
@@ -564,6 +652,7 @@ Function Get-OldBoxes{#Lists 2000/2003/XP/Vista/7/2008 machines
         Add-Content -Path "$outputdir\machines_old.txt" -Value "$($machine.Name), $($machine.OperatingSystem), $($machine.OperatingSystemServicePack), $($machine.OperatingSystemVersio), $($machine.IPv4Address)"
         $count++
     }
+    Write-Progress -Activity "Searching for 2000/2003/XP/Vista/7/2008 devices joined to the domain..." -Status "Ready" -Completed
     if($count -gt 0){
         Write-Both "    [!] We found $count machines running 2000/2003/XP/Vista/7/2008! see machines_old.txt (KB3/37/38/KB259)"
         Write-Nessus-Finding "OldBoxes" "KB259" ([System.IO.File]::ReadAllText("$outputdir\machines_old.txt"))
@@ -583,6 +672,7 @@ Function Get-DCsNotOwnedByDA {#Searches for DC objects not owned by the Domain A
                 $count++
             }
         }
+        Write-Progress -Activity "Searching for DCs not owned by Domain Admins group..." -Status "Ready" -Completed
     }
     if($count -gt 0){
         Write-Both "    [!] We found $count DCs not owned by Domains Admins group! see dcs_not_owned_by_da.txt"
@@ -592,10 +682,14 @@ Function Get-DCsNotOwnedByDA {#Searches for DC objects not owned by the Domain A
 Function Get-HostDetails{#Gets basic information about the host
     Write-Both "    [+] Device Name:  $env:ComputerName"
     Write-Both "    [+] Domain Name:  $env:UserDomain"
-    Write-Both "    [+] User Name:  $env:UserName"
-    Write-Both "    [+] NT Version:  $(Get-WinVersion)"
+    Write-Both "    [+] User Name  :  $env:UserName"
+    Write-Both "    [+] NT Version :  $(Get-WinVersion)"
     $IPAddresses = [net.dns]::GetHostAddresses("") | select -ExpandProperty IP*
-    foreach($ip in $IPAddresses){Write-Both "    [+] IP Address:  $ip"}
+    foreach($ip in $IPAddresses){
+        if($ip -ne "::1"){
+            Write-Both "    [+] IP Address :  $ip"
+        }
+    }
 }
 Function Get-FunctionalLevel{#Gets the functional level for domain and forest
     $DomainLevel = (Get-ADDomain).domainMode
@@ -1098,6 +1192,7 @@ Function Get-LastWUDate{#Check Windows update status and last install date
         }
         $progresscount++
     }
+    Write-Progress -Activity "Searching for last Windows Update installation on all DCs..." -Status "Ready" -Completed
 }
 Function Get-TimeSource {#Get NTP sync source
     $dcList = @()
@@ -1121,9 +1216,18 @@ Function Install-Dependencies{#Install DSInternals
     if($PSVersionTable.PSVersion.Major -ge 5){
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor
         [Net.SecurityProtocolType]::Tls12
+        $count      = 0
+        $totalcount = 3
+        Write-Progress -Activity "Installing dependencies..." -Status "Currently installing NuGet Package Provider" -PercentComplete ($count / $totalcount*100)
         if(!(Get-PackageProvider -ListAvailable -Name Nuget -ErrorAction SilentlyContinue)){ Install-PackageProvider -Name NuGet -Force | Out-Null }
+        $count++
+        Write-Progress -Activity "Installing dependencies..." -Status "Currently adding PSGallery to trusted Repositories" -PercentComplete ($count / $totalcount*100)
         if((Get-PSRepository -Name PSGallery).InstallationPolicy -eq "Untrusted"){ Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted }
+        $count++
+        Write-Progress -Activity "Installing dependencies..." -Status "Currently installing module DSInternals" -PercentComplete ($count / $totalcount*100)
         if(!(Get-Module -ListAvailable -Name DSInternals)){ Install-Module -Name DSInternals -Force }
+        Write-Progress -Activity "Installing dependencies..." -Status "Ready" -Completed
+        Import-Module DSInternals
     }else{
         Write-Both "    [!] PowerShell 5 or greater is needed, see https://www.microsoft.com/en-us/download/details.aspx?id=54616"
     }
@@ -1167,36 +1271,37 @@ if(Get-Module -ListAvailable -Name DSInternals)    { Import-Module DSInternals  
 if(Test-Path "$outputdir\adaudit.nessus"){ Remove-Item -recurse "$outputdir\adaudit.nessus" | Out-Null }
 Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
-Write-Both "[*] Lang specific variables" ; Get-Variables
-if($installdeps)             { $running=$true; Write-Both "[*] Installing optionnal features"                           ; Install-Dependencies }
-if($hostdetails -or $all)    { $running=$true; Write-Both "[*] Device Information"                                      ; Get-HostDetails }
-if($domainaudit -or $all)    { $running=$true; Write-Both "[*] Domain Audit"                                            ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support ; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC }
-if($trusts -or $all)         { $running=$true; Write-Both "[*] Domain Trust Audit"                                      ; Get-DomainTrusts }
-if($accounts -or $all)       { $running=$true; Write-Both "[*] Accounts Audit"                                          ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-LockedAccounts ; Get-AdminAccountChecks ; Get-NULLSessions ; Get-PrivilegedGroupAccounts ; Get-ProtectedUsers }
-if($passwordpolicy -or $all) { $running=$true; Write-Both "[*] Password Information Audit"                              ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently ; Get-PasswordPolicy ; Get-PasswordQuality }
-if($ntds -or $all)           { $running=$true; Write-Both "[*] Trying to save NTDS.dit, please wait..."                 ; Get-NTDSdit }
-if($oldboxes -or $all)       { $running=$true; Write-Both "[*] Computer Objects Audit"                                  ; Get-OldBoxes }
-if($gpo -or $all)            { $running=$true; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"           ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS; Get-GPOEnum }
-if($ouperms -or $all)        { $running=$true; Write-Both "[*] Check Generic Group AD Permissions"                      ; Get-OUPerms }
-if($laps -or $all)           { $running=$true; Write-Both "[*] Check For Existence of LAPS in domain"                   ; Get-LAPSStatus }
-if($authpolsilos -or $all)   { $running=$true; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
-if($insecurednszone -or $all){ $running=$true; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
-if($recentchanges -or $all)  { $running=$true; Write-Both "[*] Check For newly created users and groups"                ; Get-RecentChanges }
-if(!$running){ Write-Both "[!] No arguments selected;"
+Write-Both "[*] Lang specific variables"
+Get-Variables
+if($installdeps)             { $running=$true ; Write-Both "[*] Installing optionnal features"                           ; Install-Dependencies }
+if($hostdetails -or $all)    { $running=$true ; Write-Both "[*] Device Information"                                      ; Get-HostDetails }
+if($domainaudit -or $all)    { $running=$true ; Write-Both "[*] Domain Audit"                                            ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support ; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC }
+if($trusts -or $all)         { $running=$true ; Write-Both "[*] Domain Trust Audit"                                      ; Get-DomainTrusts }
+if($accounts -or $all)       { $running=$true ; Write-Both "[*] Accounts Audit"                                          ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-LockedAccounts ; Get-AdminAccountChecks ; Get-NULLSessions ; Get-PrivilegedGroupAccounts ; Get-ProtectedUsers }
+if($passwordpolicy -or $all) { $running=$true ; Write-Both "[*] Password Information Audit"                              ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently ; Get-PasswordPolicy ; Get-PasswordQuality }
+if($ntds -or $all)           { $running=$true ; Write-Both "[*] Trying to save NTDS.dit, please wait..."                 ; Get-NTDSdit }
+if($oldboxes -or $all)       { $running=$true ; Write-Both "[*] Computer Objects Audit"                                  ; Get-OldBoxes }
+if($gpo -or $all)            { $running=$true ; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"           ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS; Get-GPOEnum }
+if($ouperms -or $all)        { $running=$true ; Write-Both "[*] Check Generic Group AD Permissions"                      ; Get-OUPerms }
+if($laps -or $all)           { $running=$true ; Write-Both "[*] Check For Existence of LAPS in domain"                   ; Get-LAPSStatus }
+if($authpolsilos -or $all)   { $running=$true ; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
+if($insecurednszone -or $all){ $running=$true ; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
+if($recentchanges -or $all)  { $running=$true ; Write-Both "[*] Check For newly created users and groups"                ; Get-RecentChanges }
+if(!$running){ Write-Both "[!] No arguments selected"
     Write-Both "[!] Other options are as follows, they can be used in combination"
     Write-Both "    -installdeps installs optionnal features (DSInternals)"
     Write-Both "    -hostdetails retrieves hostname and other useful audit info"
     Write-Both "    -domainaudit retrieves information about the AD such as functional level"
     Write-Both "    -trusts retrieves information about any doman trusts"
     Write-Both "    -accounts identifies account issues such as expired, disabled, etc..."
-    Write-Both "    -passwordpolicy retrieves password policy information "
+    Write-Both "    -passwordpolicy retrieves password policy information"
     Write-Both "    -ntds dumps the NTDS.dit file using ntdsutil"
-    Write-Both "    -oldboxes identified outdated OSs like 2000/2003/XP/Vista/7/2008 joined to the domain"
+    Write-Both "    -oldboxes identifies outdated OSs like 2000/2003/XP/Vista/7/2008 joined to the domain"
     Write-Both "    -gpo dumps the GPOs in XML and HTML for later analysis"
     Write-Both "    -ouperms checks generic OU permission issues"
     Write-Both "    -laps checks if LAPS is installed"
-    Write-Both "    -authpolsilos checks for existenece of authentication policies and silos"
-    Write-Both "    -insecurednszone checks for insecure dns zones"
+    Write-Both "    -authpolsilos checks for existence of authentication policies and silos"
+    Write-Both "    -insecurednszone checks for insecure DNS zones"
     Write-Both "    -recentchanges checks for newly created users and groups (last 30 days)"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
 }
