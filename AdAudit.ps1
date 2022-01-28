@@ -1085,13 +1085,18 @@ Function Get-LastWUDate{#Check Windows update status and last install date
             Write-Host "        [!] Windows Update service is disabled on $DC!"
         }
     }
+    $progresscount = 0
+    $totalcount    = ($dcList | Measure-Object | Select-Object Count).count
     foreach($DC in $dcList){
+        if($totalcount -eq 0){ break }
+        Write-Progress -Activity "Searching for last Windows Update installation on all DCs..." -Status "Currently searching on $DC" -PercentComplete ($progresscount / $totalcount*100)
         $lastHotfix = (Get-HotFix -ComputerName $DC | Where-Object {$_.InstalledOn -ne $null} | Sort-Object -Descending InstalledOn  | Select-Object -First 1).InstalledOn
         if($lastHotfix -lt $lastMonth){
             Write-Host "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
         }else{
             Write-Host "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
         }
+        $progresscount++
     }
 }
 Function Get-TimeSource {#Get NTP sync source
