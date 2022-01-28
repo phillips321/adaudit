@@ -16,25 +16,34 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
 * Device Information
   * Get-HostDetails
 * Domain Audit
+  * Get-LastWUDate
+  * Get-DCEval
+  * Get-TimeSource
+  * Get-PrivilegedGroupMembership
   * Get-MachineAccountQuota
+  * Get-DefaultDomainControllersPolicy
   * Get-SMB1Support
   * Get-FunctionalLevel
   * Get-DCsNotOwnedByDA
   * Get-ReplicationType
   * Get-RecycleBinState
+  * Get-CriticalServicesStatus
+  * Get-RODC
 * Domain Trust Audit
   * Get-DomainTrusts
 * User Accounts Audit
   * Get-InactiveAccounts
   * Get-DisabledAccounts
+  * Get-LockedAccounts
   * Get-AdminAccountChecks
   * Get-NULLSessions
-  * Get-AdminSDHolders
+  * Get-PrivilegedGroupAccounts
   * Get-ProtectedUsers
 * Password Information Audit
   * Get-AccountPassDontExpire
   * Get-UserPasswordNotChangedRecently
   * Get-PasswordPolicy
+  * Get-PasswordQuality
 * Dumps NTDS.dit
   * Get-NTDSdit
 * Computer Objects Audit
@@ -43,6 +52,7 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
   * Get-GPOtoFile
   * Get-GPOsPerOU
   * Get-SYSVOLXMLS
+  * Get-GPOEnum
 * Check Generic Group AD Permissions
   * Get-OUPerms
 * Check For Existence of LAPS in domain
@@ -56,6 +66,7 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
 
 ## Runtime Args
 The following switches can be used in combination
+* -installdeps installs optionnal features (DSInternals)
 * -hostdetails retrieves hostname and other useful audit info
 * -domainaudit retrieves information about the AD such as functional level
 * -trusts retrieves information about any doman trusts
@@ -66,7 +77,7 @@ The following switches can be used in combination
 * -gpo dumps the GPOs in XML and HTML for later analysis
 * -ouperms checks generic OU permission issues
 * -laps checks if LAPS is installed
-* -authpolsilos checks for existenece of authentication policies and silos
-* -insecurednszone checks for insecure dns zones
+* -authpolsilos checks for existence of authentication policies and silos
+* -insecurednszone checks for insecure DNS zones
 * -recentchanges checks for newly created users and groups (last 30 days)
 * -all runs all checks, e.g. AdAudit.ps1 -all
