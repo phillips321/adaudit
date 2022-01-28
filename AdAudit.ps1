@@ -13,7 +13,7 @@
         o Changelog :
             [x] Version 5.2 - 01/28/2022
                 * Enhanced Get-LAPSStatus
-                * Added news checks (AD services + Windows Update + NTP source + Computer container + RODC + Locked accounts + Password Quality)
+                * Added news checks (AD services + Windows Update + NTP source + Computer/User container + RODC + Locked accounts + Password Quality)
                 * Added support for WS 2022
                 * Fix OS version difference check for WS 2008
                 * Fix Write-Progress not disappearing when done
@@ -990,7 +990,9 @@ Function Get-DCEval{#Basic validation of all DCs in forest
     Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!"
     #Check where newly joined computers go
     $newComputers = (Get-ADDomain).ComputersContainer
+    $newUsers     = (Get-ADDomain).UsersContainer
     Write-Both "    [+] New joined computers are stored in $newComputers"
+    Write-Both "    [+] New users are stored in $newUsers"
 }
 Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controllers Policy for default unsecure and excessive options
     $ExcessiveDCInteractiveLogon          = $false
