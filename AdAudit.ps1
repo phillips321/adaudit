@@ -13,7 +13,7 @@
         o Changelog :
             [x] Version 5.2 - 01/28/2022
                 * Enhanced Get-LAPSStatus
-                * Added news checks (AD services + Windows Update + NTP source + Computer/User container + RODC + Locked accounts + Password Quality)
+                * Added news checks (AD services + Windows Update + NTP source + Computer/User container + RODC + Locked accounts + Password Quality + SYSVOL & NETLOGON share presence)
                 * Added support for WS 2022
                 * Fix OS version difference check for WS 2008
                 * Fix Write-Progress not disappearing when done
@@ -1179,11 +1179,11 @@ Function Get-LastWUDate{#Check Windows update status and last install date
     $dcList = @()
     (Get-ADDomainController -Filter *) | ForEach-Object{$dcList+=$_.Name}
     $lastMonth = (Get-Date).AddDays(-30)
-    Write-Host "    [+] Checking Windows Update"
+    Write-Both "    [+] Checking Windows Update"
     foreach($DC in $dcList){
         $startMode = (Get-WmiObject -ComputerName $DC -Class Win32_Service -Property StartMode -Filter "Name='wuauserv'").StartMode
         if($startMode -eq "Disabled"){
-            Write-Host "        [!] Windows Update service is disabled on $DC!"
+            Write-Both "        [!] Windows Update service is disabled on $DC!"
         }
     }
     $progresscount = 0
@@ -1193,9 +1193,9 @@ Function Get-LastWUDate{#Check Windows update status and last install date
         Write-Progress -Activity "Searching for last Windows Update installation on all DCs..." -Status "Currently searching on $DC" -PercentComplete ($progresscount / $totalcount*100)
         $lastHotfix = (Get-HotFix -ComputerName $DC | Where-Object {$_.InstalledOn -ne $null} | Sort-Object -Descending InstalledOn  | Select-Object -First 1).InstalledOn
         if($lastHotfix -lt $lastMonth){
-            Write-Host "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
+            Write-Both "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
         }else{
-            Write-Host "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
+            Write-Both "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
         }
         $progresscount++
     }
@@ -1204,10 +1204,10 @@ Function Get-LastWUDate{#Check Windows update status and last install date
 Function Get-TimeSource {#Get NTP sync source
     $dcList = @()
     (Get-ADDomainController -Filter *) | ForEach-Object{$dcList += $_.Name}
-    Write-Host "    [+] Checking NTP configuration"
+    Write-Both "    [+] Checking NTP configuration"
     foreach($DC in $dcList){
         $ntpSource = w32tm /query /source /computer:$DC
-        Write-Host "        [+] $DC is syncing time from $ntpSource"
+        Write-Both "        [+] $DC is syncing time from $ntpSource"
     }
 }
 Function Get-RODC{#Check for RODC
@@ -1258,6 +1258,17 @@ Function Get-PasswordQuality{#Use DSInternals to evaluate password quality
         }
     }
 }
+Function Check-Shares {#Check SYSVOL and NETLOGON share exists
+    $dcList = @()
+    (Get-ADDomainController -Filter *) | ForEach-Object{$dcList += $_.Name}
+    Write-Both "    [+] Checking SYSVOL and NETLOGON shares on all DCs"
+    foreach($DC in $dcList){
+        $sysvolShare   = (net view $DC | ?{$_ -match 'SYSVOL'}   | measure).Count
+        $netlogonShare = (net view $DC | ?{$_ -match 'NETLOGON'} | measure).Count
+        if($sysvolShare   -eq 0){ Write-Both "        [!] SYSVOL share is missing on $DC!" }
+        if($netlogonShare -eq 0){ Write-Both "        [!] NETLOGON share is missing on $DC!" }
+    }
+}
 
 $outputdir  = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime  = Get-Date
@@ -1271,10 +1282,10 @@ $versionnum                  by phillips321
 "
 $running=$false
 Write-Both "[*] Script start time $starttime"
-if(Get-Module -ListAvailable -Name ActiveDirectory){ Import-Module ActiveDirectory }else{ Write-Host "[!] ActiveDirectory module not installed, exiting..." ; exit }
-if(Get-Module -ListAvailable -Name ServerManager)  { Import-Module ServerManager   }else{ Write-Host "[!] ServerManager module not installed, exiting..."   ; exit }
-if(Get-Module -ListAvailable -Name GroupPolicy)    { Import-Module GroupPolicy     }else{ Write-Host "[!] GroupPolicy module not installed, exiting..."     ; exit }
-if(Get-Module -ListAvailable -Name DSInternals)    { Import-Module DSInternals     }else{ Write-Host -ForegroundColor Yellow "[!] DSInternals module not installed, use -installdeps to force install" }
+if(Get-Module -ListAvailable -Name ActiveDirectory){ Import-Module ActiveDirectory }else{ Write-Both "[!] ActiveDirectory module not installed, exiting..." ; exit }
+if(Get-Module -ListAvailable -Name ServerManager)  { Import-Module ServerManager   }else{ Write-Both "[!] ServerManager module not installed, exiting..."   ; exit }
+if(Get-Module -ListAvailable -Name GroupPolicy)    { Import-Module GroupPolicy     }else{ Write-Both "[!] GroupPolicy module not installed, exiting..."     ; exit }
+if(Get-Module -ListAvailable -Name DSInternals)    { Import-Module DSInternals     }else{ Write-Both -ForegroundColor Yellow "[!] DSInternals module not installed, use -installdeps to force install" }
 if(Test-Path "$outputdir\adaudit.nessus"){ Remove-Item -recurse "$outputdir\adaudit.nessus" | Out-Null }
 Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
