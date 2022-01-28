@@ -240,6 +240,13 @@ Function Get-LAPSStatus{#Check for presence of LAPS in domain
     try{
         Get-ADObject "CN=ms-Mcs-AdmPwd,CN=Schema,CN=Configuration,$((Get-ADDomain).DistinguishedName)" -ErrorAction Stop | Out-Null
         Write-Both "    [+] LAPS Installed in domain"
+    }
+    catch{
+        Write-Both "    [!] LAPS Not Installed in domain (KB258)"
+        Write-Nessus-Finding "LAPSMissing" "KB258" "LAPS Not Installed in domain"
+    }
+    if(Get-Module -ListAvailable -Name AdmPwd.PS){
+        Import-Module AdmPwd.PS
         $count            = 0
         $missingComputers = (Get-ADComputer -Filter {ms-Mcs-AdmPwd -notlike "*"}).Name
         $totalcount       = ($missingComputers | Measure-Object | Select-Object Count).count
@@ -268,10 +275,8 @@ Function Get-LAPSStatus{#Check for presence of LAPS in domain
             }
         }
         Write-Both "    [!] LAPS extended rights exported, see $outputdir\laps_read-extendedrights.txt"
-    }
-    catch{
-        Write-Both "    [!] LAPS Not Installed in domain (KB258)"
-        Write-Nessus-Finding "LAPSMissing" "KB258" "LAPS Not Installed in domain"
+    }else{
+        Write-Both "    [!] LAPS PowerShell module is not installed, can't run LAPS checks on this DC"
     }
 }
 Function Get-PrivilegedGroupAccounts{#Lists users in Admininstrators, DA and EA groups
