@@ -11,7 +11,7 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.2 - 01/28/2022
+            [x] Version 5.2 - 02/04/2022
                 * Enhanced Get-LAPSStatus
                 * Added news checks (AD services + Windows Update + NTP source + Computer/User container + RODC + Locked accounts + Password Quality + SYSVOL & NETLOGON share presence)
                 * Added support for WS 2022
@@ -1166,11 +1166,14 @@ Function Get-CriticalServicesStatus{#Check AD services status
     }
     foreach($DC in $dcList){
         foreach($service in $services){
-            $checkService  = Get-Service $service -ComputerName $DC
+            $checkService  = Get-Service $service -ComputerName $DC -ErrorAction SilentlyContinue
             $serviceName   = $checkService.Name
             $serviceStatus = $checkService.Status
-            if($serviceStatus -ne "Running"){
-                Write-Both "        [!] Service $($checkService.Name) is not running on $DC!"
+            if(!($serviceStatus)){
+                Write-Both "        [!] Service $($service) cannot be checked on $DC!"
+            }
+            elseif($serviceStatus -ne "Running"){
+                Write-Both "        [!] Service $($service) is not running on $DC!"
             }
         }
     }
@@ -1181,8 +1184,11 @@ Function Get-LastWUDate{#Check Windows update status and last install date
     $lastMonth = (Get-Date).AddDays(-30)
     Write-Both "    [+] Checking Windows Update"
     foreach($DC in $dcList){
-        $startMode = (Get-WmiObject -ComputerName $DC -Class Win32_Service -Property StartMode -Filter "Name='wuauserv'").StartMode
-        if($startMode -eq "Disabled"){
+        $startMode = (Get-WmiObject -ComputerName $DC -Class Win32_Service -Property StartMode -Filter "Name='wuauserv'" -ErrorAction SilentlyContinue).StartMode
+        if(!($startMode)){
+            Write-Both "        [!] Windows Update service cannot be checked on $DC!"
+        }
+        elseif($startMode -eq "Disabled"){
             Write-Both "        [!] Windows Update service is disabled on $DC!"
         }
     }
@@ -1191,11 +1197,16 @@ Function Get-LastWUDate{#Check Windows update status and last install date
     foreach($DC in $dcList){
         if($totalcount -eq 0){ break }
         Write-Progress -Activity "Searching for last Windows Update installation on all DCs..." -Status "Currently searching on $DC" -PercentComplete ($progresscount / $totalcount*100)
-        $lastHotfix = (Get-HotFix -ComputerName $DC | Where-Object {$_.InstalledOn -ne $null} | Sort-Object -Descending InstalledOn  | Select-Object -First 1).InstalledOn
-        if($lastHotfix -lt $lastMonth){
-            Write-Both "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
-        }else{
-            Write-Both "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
+        try{
+            $lastHotfix = (Get-HotFix -ComputerName $DC | Where-Object {$_.InstalledOn -ne $null} | Sort-Object -Descending InstalledOn  | Select-Object -First 1).InstalledOn
+            if($lastHotfix -lt $lastMonth){
+                Write-Both "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
+            }else{
+                Write-Both "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
+            }
+        }
+        catch{
+                Write-Both "        [!] Cannot check last update date on $DC"
         }
         $progresscount++
     }
@@ -1263,10 +1274,15 @@ Function Check-Shares {#Check SYSVOL and NETLOGON share exists
     (Get-ADDomainController -Filter *) | ForEach-Object{$dcList += $_.Name}
     Write-Both "    [+] Checking SYSVOL and NETLOGON shares on all DCs"
     foreach($DC in $dcList){
-        $sysvolShare   = (net view $DC | ?{$_ -match 'SYSVOL'}   | measure).Count
-        $netlogonShare = (net view $DC | ?{$_ -match 'NETLOGON'} | measure).Count
-        if($sysvolShare   -eq 0){ Write-Both "        [!] SYSVOL share is missing on $DC!" }
-        if($netlogonShare -eq 0){ Write-Both "        [!] NETLOGON share is missing on $DC!" }
+        $shareList     = (Get-WmiObject -Class Win32_Share -ComputerName $DC -ErrorAction SilentlyContinue)
+        if(!($shareList)){
+            Write-Both "        [!] Cannot test shares on $DC!"
+        }else{
+            $sysvolShare   = ($shareList | ?{$_ -match 'SYSVOL'}   | measure).Count
+            $netlogonShare = ($shareList | ?{$_ -match 'NETLOGON'} | measure).Count
+            if($sysvolShare   -eq 0){ Write-Both "        [!] SYSVOL share is missing on $DC!" }
+            if($netlogonShare -eq 0){ Write-Both "        [!] NETLOGON share is missing on $DC!" }
+        }
     }
 }
 
@@ -1285,7 +1301,7 @@ Write-Both "[*] Script start time $starttime"
 if(Get-Module -ListAvailable -Name ActiveDirectory){ Import-Module ActiveDirectory }else{ Write-Both "[!] ActiveDirectory module not installed, exiting..." ; exit }
 if(Get-Module -ListAvailable -Name ServerManager)  { Import-Module ServerManager   }else{ Write-Both "[!] ServerManager module not installed, exiting..."   ; exit }
 if(Get-Module -ListAvailable -Name GroupPolicy)    { Import-Module GroupPolicy     }else{ Write-Both "[!] GroupPolicy module not installed, exiting..."     ; exit }
-if(Get-Module -ListAvailable -Name DSInternals)    { Import-Module DSInternals     }else{ Write-Both -ForegroundColor Yellow "[!] DSInternals module not installed, use -installdeps to force install" }
+if(Get-Module -ListAvailable -Name DSInternals)    { Import-Module DSInternals     }else{ Write-Both "[!] DSInternals module not installed, use -installdeps to force install" }
 if(Test-Path "$outputdir\adaudit.nessus"){ Remove-Item -recurse "$outputdir\adaudit.nessus" | Out-Null }
 Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
