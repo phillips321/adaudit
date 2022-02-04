@@ -1218,7 +1218,11 @@ Function Get-TimeSource {#Get NTP sync source
     Write-Both "    [+] Checking NTP configuration"
     foreach($DC in $dcList){
         $ntpSource = w32tm /query /source /computer:$DC
-        Write-Both "        [+] $DC is syncing time from $ntpSource"
+        if($ntpSource -like '*0x800706BA*'){
+            Write-Both "        [+] Cannot get time source for $DC"
+        }else{
+            Write-Both "        [+] $DC is syncing time from $ntpSource"
+        }
     }
 }
 Function Get-RODC{#Check for RODC
