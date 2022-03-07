@@ -11,7 +11,9 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.2 - 01/28/2022
+            [x] Version 5.3 - 03/07/2022
+                * Added SamAccountName to Get-PrivilegedGroupMembership output
+            [ ] Version 5.2 - 01/28/2022
                 * Enhanced Get-LAPSStatus
                 * Added news checks (AD services + Windows Update + NTP source + Computer container + RODC + Locked accounts + Password Quality)
                 * Added support for WS 2022
@@ -898,17 +900,17 @@ Function Get-PrivilegedGroupMembership{#List Domain Admins, Enterprise Admins an
     if(($SchemaMembers | measure).count -ne 0){
             Write-Both "    [!] Schema Admins not empty!!!"
         foreach($member in $SchemaMembers){
-            Add-Content -Path "$outputdir\schema_admins.txt" -Value "$($member.objectClass) $($member.Name)"
+            Add-Content -Path "$outputdir\schema_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
         }
     }
     if(($EnterpriseMembers | measure).count -ne 0){
             Write-Both "    [!] Enterprise Admins not empty!!!"
         foreach($member in $EnterpriseMembers){
-            Add-Content -Path "$outputdir\enterprise_admins.txt" -Value "$($member.objectClass) $($member.Name)"
+            Add-Content -Path "$outputdir\enterprise_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
         }
     }
     foreach($member in $DomainAdminsMembers){
-        Add-Content -Path "$outputdir\domain_admins.txt" -Value "$($member.objectClass) $($member.Name)"
+        Add-Content -Path "$outputdir\domain_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
     }
 }
 Function Get-DCEval{#Basic validation of all DCs in forest
