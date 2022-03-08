@@ -13,6 +13,7 @@
         o Changelog :
             [x] Version 5.3 - 03/07/2022
                 * Added SamAccountName to Get-PrivilegedGroupMembership output
+                * Swapped some write-host to write-both so it's captured in the consolelog.txt
             [ ] Version 5.2 - 01/28/2022
                 * Enhanced Get-LAPSStatus
                 * Added news checks (AD services + Windows Update + NTP source + Computer container + RODC + Locked accounts + Password Quality)
@@ -1178,7 +1179,7 @@ Function Get-LastWUDate{#Check Windows update status and last install date
     foreach($DC in $dcList){
         $startMode = (Get-WmiObject -ComputerName $DC -Class Win32_Service -Property StartMode -Filter "Name='wuauserv'").StartMode
         if($startMode -eq "Disabled"){
-            Write-Host "        [!] Windows Update service is disabled on $DC!"
+            Write-Both "        [!] Windows Update service is disabled on $DC!"
         }
     }
     $progresscount = 0
@@ -1188,9 +1189,9 @@ Function Get-LastWUDate{#Check Windows update status and last install date
         Write-Progress -Activity "Searching for last Windows Update installation on all DCs..." -Status "Currently searching on $DC" -PercentComplete ($progresscount / $totalcount*100)
         $lastHotfix = (Get-HotFix -ComputerName $DC | Where-Object {$_.InstalledOn -ne $null} | Sort-Object -Descending InstalledOn  | Select-Object -First 1).InstalledOn
         if($lastHotfix -lt $lastMonth){
-            Write-Host "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
+            Write-Both "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
         }else{
-            Write-Host "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
+            Write-Both "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
         }
         $progresscount++
     }
@@ -1202,7 +1203,7 @@ Function Get-TimeSource {#Get NTP sync source
     Write-Host "    [+] Checking NTP configuration"
     foreach($DC in $dcList){
         $ntpSource = w32tm /query /source /computer:$DC
-        Write-Host "        [+] $DC is syncing time from $ntpSource"
+        Write-Both "        [+] $DC is syncing time from $ntpSource"
     }
 }
 Function Get-RODC{#Check for RODC
