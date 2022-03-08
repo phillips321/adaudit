@@ -1175,7 +1175,7 @@ Function Get-LastWUDate{#Check Windows update status and last install date
     $dcList = @()
     (Get-ADDomainController -Filter *) | ForEach-Object{$dcList+=$_.Name}
     $lastMonth = (Get-Date).AddDays(-30)
-    Write-Host "    [+] Checking Windows Update"
+    Write-Both "    [+] Checking Windows Update"
     foreach($DC in $dcList){
         $startMode = (Get-WmiObject -ComputerName $DC -Class Win32_Service -Property StartMode -Filter "Name='wuauserv'").StartMode
         if($startMode -eq "Disabled"){
@@ -1200,7 +1200,7 @@ Function Get-LastWUDate{#Check Windows update status and last install date
 Function Get-TimeSource {#Get NTP sync source
     $dcList = @()
     (Get-ADDomainController -Filter *) | ForEach-Object{$dcList += $_.Name}
-    Write-Host "    [+] Checking NTP configuration"
+    Write-Both "    [+] Checking NTP configuration"
     foreach($DC in $dcList){
         $ntpSource = w32tm /query /source /computer:$DC
         Write-Both "        [+] $DC is syncing time from $ntpSource"
