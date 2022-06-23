@@ -16,7 +16,7 @@
                 * Swapped some write-host to write-both so it's captured in the consolelog.txt
             [ ] Version 5.2 - 28/01/2022
                 * Enhanced Get-LAPSStatus
-                * Added news checks (AD services + Windows Update + NTP source + Computer container + RODC + Locked accounts + Password Quality)
+                * Added news checks (AD services + Windows Update + NTP source + Computer/User container + RODC + Locked accounts + Password Quality + SYSVOL & NETLOGON share presence)
                 * Added support for WS 2022
                 * Fix OS version difference check for WS 2008
                 * Fix Write-Progress not disappearing when done
@@ -243,6 +243,13 @@ Function Get-LAPSStatus{#Check for presence of LAPS in domain
     try{
         Get-ADObject "CN=ms-Mcs-AdmPwd,CN=Schema,CN=Configuration,$((Get-ADDomain).DistinguishedName)" -ErrorAction Stop | Out-Null
         Write-Both "    [+] LAPS Installed in domain"
+    }
+    catch{
+        Write-Both "    [!] LAPS Not Installed in domain (KB258)"
+        Write-Nessus-Finding "LAPSMissing" "KB258" "LAPS Not Installed in domain"
+    }
+    if(Get-Module -ListAvailable -Name AdmPwd.PS){
+        Import-Module AdmPwd.PS
         $count            = 0
         $missingComputers = (Get-ADComputer -Filter {ms-Mcs-AdmPwd -notlike "*"}).Name
         $totalcount       = ($missingComputers | Measure-Object | Select-Object Count).count
@@ -271,10 +278,8 @@ Function Get-LAPSStatus{#Check for presence of LAPS in domain
             }
         }
         Write-Both "    [!] LAPS extended rights exported, see $outputdir\laps_read-extendedrights.txt"
-    }
-    catch{
-        Write-Both "    [!] LAPS Not Installed in domain (KB258)"
-        Write-Nessus-Finding "LAPSMissing" "KB258" "LAPS Not Installed in domain"
+    }else{
+        Write-Both "    [!] LAPS PowerShell module is not installed, can't run LAPS checks on this DC"
     }
 }
 Function Get-PrivilegedGroupAccounts{#Lists users in Admininstrators, DA and EA groups
@@ -988,7 +993,9 @@ Function Get-DCEval{#Basic validation of all DCs in forest
     Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!"
     #Check where newly joined computers go
     $newComputers = (Get-ADDomain).ComputersContainer
+    $newUsers     = (Get-ADDomain).UsersContainer
     Write-Both "    [+] New joined computers are stored in $newComputers"
+    Write-Both "    [+] New users are stored in $newUsers"
 }
 Function Get-DefaultDomainControllersPolicy{#Enumerates Default Domain Controllers Policy for default unsecure and excessive options
     $ExcessiveDCInteractiveLogon          = $false
@@ -1162,11 +1169,14 @@ Function Get-CriticalServicesStatus{#Check AD services status
     }
     foreach($DC in $dcList){
         foreach($service in $services){
-            $checkService  = Get-Service $service -ComputerName $DC
+            $checkService  = Get-Service $service -ComputerName $DC -ErrorAction SilentlyContinue
             $serviceName   = $checkService.Name
             $serviceStatus = $checkService.Status
-            if($serviceStatus -ne "Running"){
-                Write-Both "        [!] Service $($checkService.Name) is not running on $DC!"
+            if(!($serviceStatus)){
+                Write-Both "        [!] Service $($service) cannot be checked on $DC!"
+            }
+            elseif($serviceStatus -ne "Running"){
+                Write-Both "        [!] Service $($service) is not running on $DC!"
             }
         }
     }
@@ -1177,8 +1187,12 @@ Function Get-LastWUDate{#Check Windows update status and last install date
     $lastMonth = (Get-Date).AddDays(-30)
     Write-Both "    [+] Checking Windows Update"
     foreach($DC in $dcList){
-        $startMode = (Get-WmiObject -ComputerName $DC -Class Win32_Service -Property StartMode -Filter "Name='wuauserv'").StartMode
-        if($startMode -eq "Disabled"){
+
+        $startMode = (Get-WmiObject -ComputerName $DC -Class Win32_Service -Property StartMode -Filter "Name='wuauserv'" -ErrorAction SilentlyContinue).StartMode
+        if(!($startMode)){
+            Write-Both "        [!] Windows Update service cannot be checked on $DC!"
+        }
+        elseif($startMode -eq "Disabled"){
             Write-Both "        [!] Windows Update service is disabled on $DC!"
         }
     }
@@ -1187,11 +1201,16 @@ Function Get-LastWUDate{#Check Windows update status and last install date
     foreach($DC in $dcList){
         if($totalcount -eq 0){ break }
         Write-Progress -Activity "Searching for last Windows Update installation on all DCs..." -Status "Currently searching on $DC" -PercentComplete ($progresscount / $totalcount*100)
-        $lastHotfix = (Get-HotFix -ComputerName $DC | Where-Object {$_.InstalledOn -ne $null} | Sort-Object -Descending InstalledOn  | Select-Object -First 1).InstalledOn
-        if($lastHotfix -lt $lastMonth){
-            Write-Both "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
-        }else{
-            Write-Both "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
+        try{
+            $lastHotfix = (Get-HotFix -ComputerName $DC | Where-Object {$_.InstalledOn -ne $null} | Sort-Object -Descending InstalledOn  | Select-Object -First 1).InstalledOn
+            if($lastHotfix -lt $lastMonth){
+                Write-Both "        [!] Windows is not up to date on $DC, last install: $($lastHotfix)"
+            }else{
+                Write-Both "        [+] Windows is up to date on $DC, last install: $($lastHotfix)"
+            }
+        }
+        catch{
+                Write-Both "        [!] Cannot check last update date on $DC"
         }
         $progresscount++
     }
@@ -1203,7 +1222,11 @@ Function Get-TimeSource {#Get NTP sync source
     Write-Both "    [+] Checking NTP configuration"
     foreach($DC in $dcList){
         $ntpSource = w32tm /query /source /computer:$DC
-        Write-Both "        [+] $DC is syncing time from $ntpSource"
+        if($ntpSource -like '*0x800706BA*'){
+            Write-Both "        [+] Cannot get time source for $DC"
+        }else{
+            Write-Both "        [+] $DC is syncing time from $ntpSource"
+        }
     }
 }
 Function Get-RODC{#Check for RODC
@@ -1254,6 +1277,22 @@ Function Get-PasswordQuality{#Use DSInternals to evaluate password quality
         }
     }
 }
+Function Check-Shares {#Check SYSVOL and NETLOGON share exists
+    $dcList = @()
+    (Get-ADDomainController -Filter *) | ForEach-Object{$dcList += $_.Name}
+    Write-Both "    [+] Checking SYSVOL and NETLOGON shares on all DCs"
+    foreach($DC in $dcList){
+        $shareList     = (Get-WmiObject -Class Win32_Share -ComputerName $DC -ErrorAction SilentlyContinue)
+        if(!($shareList)){
+            Write-Both "        [!] Cannot test shares on $DC!"
+        }else{
+            $sysvolShare   = ($shareList | ?{$_ -match 'SYSVOL'}   | measure).Count
+            $netlogonShare = ($shareList | ?{$_ -match 'NETLOGON'} | measure).Count
+            if($sysvolShare   -eq 0){ Write-Both "        [!] SYSVOL share is missing on $DC!" }
+            if($netlogonShare -eq 0){ Write-Both "        [!] NETLOGON share is missing on $DC!" }
+        }
+    }
+}
 
 $outputdir  = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime  = Get-Date
@@ -1267,10 +1306,10 @@ $versionnum                  by phillips321
 "
 $running=$false
 Write-Both "[*] Script start time $starttime"
-if(Get-Module -ListAvailable -Name ActiveDirectory){ Import-Module ActiveDirectory }else{ Write-Host "[!] ActiveDirectory module not installed, exiting..." ; exit }
-if(Get-Module -ListAvailable -Name ServerManager)  { Import-Module ServerManager   }else{ Write-Host "[!] ServerManager module not installed, exiting..."   ; exit }
-if(Get-Module -ListAvailable -Name GroupPolicy)    { Import-Module GroupPolicy     }else{ Write-Host "[!] GroupPolicy module not installed, exiting..."     ; exit }
-if(Get-Module -ListAvailable -Name DSInternals)    { Import-Module DSInternals     }else{ Write-Host -ForegroundColor Yellow "[!] DSInternals module not installed, use -installdeps to force install" }
+if(Get-Module -ListAvailable -Name ActiveDirectory){ Import-Module ActiveDirectory }else{ Write-Both "[!] ActiveDirectory module not installed, exiting..." ; exit }
+if(Get-Module -ListAvailable -Name ServerManager)  { Import-Module ServerManager   }else{ Write-Both "[!] ServerManager module not installed, exiting..."   ; exit }
+if(Get-Module -ListAvailable -Name GroupPolicy)    { Import-Module GroupPolicy     }else{ Write-Both "[!] GroupPolicy module not installed, exiting..."     ; exit }
+if(Get-Module -ListAvailable -Name DSInternals)    { Import-Module DSInternals     }else{ Write-Both "[!] DSInternals module not installed, use -installdeps to force install" }
 if(Test-Path "$outputdir\adaudit.nessus"){ Remove-Item -recurse "$outputdir\adaudit.nessus" | Out-Null }
 Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
@@ -1278,7 +1317,7 @@ Write-Both "[*] Lang specific variables"
 Get-Variables
 if($installdeps)             { $running=$true ; Write-Both "[*] Installing optionnal features"                           ; Install-Dependencies }
 if($hostdetails -or $all)    { $running=$true ; Write-Both "[*] Device Information"                                      ; Get-HostDetails }
-if($domainaudit -or $all)    { $running=$true ; Write-Both "[*] Domain Audit"                                            ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support ; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC }
+if($domainaudit -or $all)    { $running=$true ; Write-Both "[*] Domain Audit"                                            ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support ; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Check-Shares ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC }
 if($trusts -or $all)         { $running=$true ; Write-Both "[*] Domain Trust Audit"                                      ; Get-DomainTrusts }
 if($accounts -or $all)       { $running=$true ; Write-Both "[*] Accounts Audit"                                          ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-LockedAccounts ; Get-AdminAccountChecks ; Get-NULLSessions ; Get-PrivilegedGroupAccounts ; Get-ProtectedUsers }
 if($passwordpolicy -or $all) { $running=$true ; Write-Both "[*] Password Information Audit"                              ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently ; Get-PasswordPolicy ; Get-PasswordQuality }
