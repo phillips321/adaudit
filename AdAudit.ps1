@@ -11,10 +11,10 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.3 - 03/07/2022
+            [x] Version 5.3 - 07/03/2022
                 * Added SamAccountName to Get-PrivilegedGroupMembership output
                 * Swapped some write-host to write-both so it's captured in the consolelog.txt
-            [ ] Version 5.2 - 01/28/2022
+            [ ] Version 5.2 - 28/01/2022
                 * Enhanced Get-LAPSStatus
                 * Added news checks (AD services + Windows Update + NTP source + Computer container + RODC + Locked accounts + Password Quality)
                 * Added support for WS 2022
@@ -136,7 +136,7 @@ Param (
     [switch]$recentchanges   = $false,
     [switch]$all             = $false
 )
-$versionnum               = "v5.2"
+$versionnum               = "v5.3"
 $AdministratorTranslation = @("Administrator","Administrateur","Administrador")#If missing put the default Administrator name for your own language here
 
 Function Get-Variables(){#Retrieve group names and OS version
