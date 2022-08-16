@@ -1,7 +1,7 @@
 <#
     .NOTES
         Author       : phillips321.co.uk
-        Creation Date: 04/20/2018
+        Creation Date: 16/08/2018
         Script Name  : ADAudit.ps1
     .SYNOPSIS
         PowerShell Script to perform a quick AD audit
@@ -11,7 +11,10 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.3 - 07/03/2022
+            [x] Version 5.4 - 16/08/2022
+                * Added nessus output tags for LAPS
+                * Added nessus output for GPO issues
+            [ ] Version 5.3 - 07/03/2022
                 * Added SamAccountName to Get-PrivilegedGroupMembership output
                 * Swapped some write-host to write-both so it's captured in the consolelog.txt
             [ ] Version 5.2 - 28/01/2022
@@ -136,7 +139,7 @@ Param (
     [switch]$recentchanges   = $false,
     [switch]$all             = $false
 )
-$versionnum               = "v5.3"
+$versionnum               = "v5.4"
 $AdministratorTranslation = @("Administrator","Administrateur","Administrador")#If missing put the default Administrator name for your own language here
 
 Function Get-Variables(){#Retrieve group names and OS version
@@ -256,6 +259,7 @@ Function Get-LAPSStatus{#Check for presence of LAPS in domain
         if($totalcount -gt 0){
             $missingComputers | Add-Content -Path $outputdir\laps_missing-computers.txt
             Write-Both "    [!] Some computers/servers don't have LAPS password set, see $outputdir\laps_missing-computers.txt"
+            Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText("$outputdir\laps_missing-computers.txt"))
         }
         $count         = 0
         $computersList = (Get-ADComputer -Filter {ms-Mcs-AdmPwdExpirationTime -like "*"} -Properties ms-Mcs-AdmPwdExpirationTime | select Name,ms-Mcs-AdmPwdExpirationTime)
@@ -269,6 +273,7 @@ Function Get-LAPSStatus{#Check for presence of LAPS in domain
         }
         if($count -gt 0){
             Write-Both "    [!] Some computers/servers have LAPS password expired, see $outputdir\laps_expired-passwords.txt"
+            Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText("$outputdir\laps_expired-passwords.txt"))
         }
         Get-ADOrganizationalUnit -Filter * | Find-AdmPwdExtendedRights -PipelineVariable OU | foreach{
             $_.ExtendedRightHolders | foreach{
@@ -278,6 +283,8 @@ Function Get-LAPSStatus{#Check for presence of LAPS in domain
             }
         }
         Write-Both "    [!] LAPS extended rights exported, see $outputdir\laps_read-extendedrights.txt"
+        Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText("$outputdir\laps_read-extendedrights.txt"))
+
     }else{
         Write-Both "    [!] LAPS PowerShell module is not installed, can't run LAPS checks on this DC"
     }
@@ -854,18 +861,22 @@ Function Get-GPOEnum{#Loops GPOs for some important domain-wide settings
     #Output for Admins local logon restrictions
     if($AdminLocalLogonAllowed){
         Write-Both "    [!] No GPO restricts Domain, Schema and Enterprise local logon across domain!!!"
+        Write-Nessus-Finding "AdminLogon" "KB479" "No GPO restricts Domain, Schema and Enterprise local logon across domain!"
     }
     #Output for Admins RDP logon restrictions
     if($AdminRPDLogonAllowed){
         Write-Both "    [!] No GPO restricts Domain, Schema and Enterprise RDP logon across domain!!!"
+        Write-Nessus-Finding "AdminLogon" "KB479" "No GPO restricts Domain, Schema and Enterprise RDP logon across domain!"
     }
     #Output for Admins network logon restrictions
     if($AdminNetworkLogonAllowed){
         Write-Both "    [!] No GPO restricts Domain, Schema and Enterprise network logon across domain!!!"
+        Write-Nessus-Finding "AdminLogon" "KB479" "No GPO restricts Domain, Schema and Enterprise network logon across domain!"
     }
     #Output for Validate Kerberos Encryption algorythm
     if($EncryptionTypesNotConfigured){
         Write-Both "    [!] RC4_HMAC_MD5 enabled for Kerberos across domain!!!"
+        Write-Nessus-Finding "WeakKerberosEncryption" "KB995" "RC4_HMAC_MD5 enabled for Kerberos across domain!"
     }
     #Output for deny NTLM
     if($DenyNTLM.count -eq 0){
