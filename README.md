@@ -63,6 +63,7 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
   * Get-DNSZoneInsecure
 * Check for newly created users and groups
   * Get-RecentChanges
+* Check for ADCS vulnerabiltiies, ESC1,2,3,4 and 8. 
 
 ## Runtime Args
 The following switches can be used in combination
