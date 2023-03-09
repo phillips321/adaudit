@@ -81,4 +81,5 @@ The following switches can be used in combination
 * -authpolsilos checks for existence of authentication policies and silos
 * -insecurednszone checks for insecure DNS zones
 * -recentchanges checks for newly created users and groups (last 30 days)
+* -adcs checks for ADCS vulnerabiltiies, ESC1,2,3,4 and 8.
 * -all runs all checks, e.g. AdAudit.ps1 -all
