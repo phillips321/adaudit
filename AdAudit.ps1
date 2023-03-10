@@ -11,7 +11,10 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.5 - 09/03/2023
+            [x] Version 5.6 - 17/08/2023
+                * Added kerberoasting checks
+                * Added ASREProasting Checks
+            [ ] Version 5.5 - 16/08/2023
                 * ADCS vulnerabilities added, checks for ESC1,2,3,4 and 8.
             [ ] Version 5.4 - 16/08/2022
                 * Added nessus output tags for LAPS
@@ -140,9 +143,11 @@ Param (
     [switch]$insecurednszone = $false,
     [switch]$recentchanges   = $false,
     [switch]$adcs            = $false,
+    [switch]$spn             = $false,
+    [switch]$asprep          = $false,
     [switch]$all             = $false
 )
-$versionnum               = "v5.5"
+$versionnum               = "v5.6"
 $AdministratorTranslation = @("Administrator","Administrateur","Administrador")#If missing put the default Administrator name for your own language here
 
 Function Get-Variables(){#Retrieve group names and OS version
@@ -1427,6 +1432,96 @@ Function Get-ADCSVulns {#Check for ADCS Vulnerabiltiies, ESC1,2,3,4 and 8. ESC8 
     Write-Nessus-Finding "Active Directory Certificate Service Vulnerable Templates" "KB1096" ([System.IO.File]::ReadAllText("$outputdir\vulnerable_templates.txt"))
 }
 
+Function Get-SPNs {
+    $default_groups = @("Domain Admins", "Domain Admins", "Enterprise Admins", "Schema Admins", "Domain Controllers", "Backup Operators", "Account Operators", "Server Operators", "Print Operators", "Remote Desktop Users", "Network Configuration Operators", "Exchange Organization Admins", "Exchange View-Only Admins", "Exchange Recipient Admins", "Exchange Servers", "Exchange Trusted Subsystem", "Exchange Public Folder Admins", "Exchange UM Management")
+    $base_groups = @()
+    foreach ($group in $default_groups) {
+        try {
+            $ADGrp = Get-ADGroup -Identity $group -ErrorAction SilentlyContinue
+            $base_groups += $ADGrp.Name
+        }
+        catch {
+            $base_groups = $base_groups | Where-Object { $_ -ne $group }
+        }
+    }
+
+    $all_groups = $base_groups
+    foreach ($group in $default_groups) {
+        try {
+            $ADGrp = Get-ADGroup -Identity $group -ErrorAction SilentlyContinue
+            $QueryResult = Get-ADGroup -LDAPFilter "(&(objectCategory=group)(memberof=$($ADGrp.DistinguishedName)))"
+            foreach ($result in $QueryResult) {
+                $all_groups += $result.Name
+            }
+        }
+        catch {}
+    }
+
+    while ($base_groups.count -gt 0) {
+        $new_groups = @()
+        foreach ($group in $base_groups) {
+            # I dont want to see errors if a group is not found
+            try {
+                $ADGrp = Get-ADGroup -Identity $group -ErrorAction SilentlyContinue
+                $QueryResult = Get-ADGroup -LDAPFilter "(&(objectCategory=group)(memberof=$($ADGrp.DistinguishedName)))"
+                foreach ($result in $QueryResult) {
+                    $all_groups += $result.Name
+                    $new_groups += $result.Name
+                }
+            }
+            catch {
+                # Remove group from all_groups
+                $all_groups = $all_groups | Where-Object { $_ -ne $group }
+            }
+        }
+        $base_groups = $new_groups
+    }
+
+
+    $SPNs = Get-ADObject -Filter { serviceprincipalname -like "*" } -Properties MemberOf |
+    Where-Object { $_.ObjectClass -eq "user" } |
+    ForEach-Object {
+        $groups = $_.MemberOf | Get-ADObject | Where-Object { $_.ObjectClass -eq "group" }
+        $_ | Select-Object Name, @{ Name = "Groups"; Expression = { $groups.Name -join ',' } }
+    }
+
+    # for spn in spns check if a group in spn.groups is in all_groups
+    $high_value_users = @()
+    foreach ($spn in $SPNs) {
+        $spn_groups = $spn.Groups.Split(',')
+        $name = $spn.Name
+        foreach ($spn_group in $spn_groups) {
+            if ($all_groups -contains $spn_group) {
+                # Create object with user and group
+                # Add object to high_value_users if the user.name is not already in the list
+                $user = New-Object -TypeName PSObject -Property @{
+                    Name = $name
+                    Group = $spn_group
+                }
+                if ($high_value_users.Name -notcontains $name) {
+                    $high_value_users += $user
+                }
+            }
+        }
+    }
+
+    foreach ($user in $high_value_users) {
+        $kerbuser = '    [!] High value kerberoastable user: ' + $user.Name + ' in groups: ' + $user.Group
+        Write-both $kerbuser
+        add-content -path $outputdir\SPNs.txt -value $user.Name
+    }
+    Write-Nessus-Finding  "Kerberoast Attack - Services Configured With a Weak Password" "KB611" ([System.IO.File]::ReadAllText("$outputdir\SPNs.txt"))
+}
+function Get-ADUsersWithoutPreAuth {
+    $ASREP = Get-ADUser -Filter * -Properties DoesNotRequirePreAuth, Enabled | Where-Object { $_.DoesNotRequirePreAuth -eq "True" -and $_.Enabled -eq "True" } | Select-Object Name
+    foreach ($user in $ASREP) {
+        $asrepuser = '    [!] AS-REP Roastable user: ' + $user.Name
+        Write-both $asrepuser
+        add-content -path $outputdir\ASREP.txt -value $user.Name
+    }
+    Write-Nessus-Finding  "AS-REP Roasting Attack" "KB720" ([System.IO.File]::ReadAllText("$outputdir\ASREP.txt"))
+}
+
 $outputdir  = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime  = Get-Date
 $scriptname = $MyInvocation.MyCommand.Name
@@ -1462,6 +1557,8 @@ if($laps -or $all)           { $running=$true ; Write-Both "[*] Check For Existe
 if($authpolsilos -or $all)   { $running=$true ; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
 if($insecurednszone -or $all){ $running=$true ; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
 if($recentchanges -or $all)  { $running=$true ; Write-Both "[*] Check For newly created users and groups"                ; Get-RecentChanges }
+if($spn -or $all)            { $running=$true ; Write-Both "[*] Check high value kerberoastable user accounts"           ; Get-SPNs }
+if($asprep -or $all)         { $running=$true ; Write-Both "[*] Check for accounts with kerberos pre-auth"               ; Get-ADUsersWithoutPreAuth }
 if($adcs -or $all)           { $running=$true ; Write-Both "[*] Check For ADCS Vulnerabilities"                          ; Get-ADCSVulns }
 if(!$running){ Write-Both "[!] No arguments selected"
     Write-Both "[!] Other options are as follows, they can be used in combination"
@@ -1479,6 +1576,8 @@ if(!$running){ Write-Both "[!] No arguments selected"
     Write-Both "    -authpolsilos checks for existence of authentication policies and silos"
     Write-Both "    -insecurednszone checks for insecure DNS zones"
     Write-Both "    -recentchanges checks for newly created users and groups (last 30 days)"
+    Write-Both "    -spn checks for kerberoastable high value accounts"
+    Write-Both "    -asprep checks for accounts with kerberos pre-auth"
     Write-Both "    -ADCS checks for ESC1,2,3,4 and 8"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
 }
