@@ -11,10 +11,10 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.6 - 17/08/2023
+            [x] Version 5.6 - 11/03/2023
                 * Added kerberoasting checks
                 * Added ASREProasting Checks
-            [ ] Version 5.5 - 16/08/2023
+            [ ] Version 5.5 - 09/03/2023
                 * ADCS vulnerabilities added, checks for ESC1,2,3,4 and 8.
             [ ] Version 5.4 - 16/08/2022
                 * Added nessus output tags for LAPS
