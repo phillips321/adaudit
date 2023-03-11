@@ -144,7 +144,7 @@ Param (
     [switch]$recentchanges   = $false,
     [switch]$adcs            = $false,
     [switch]$spn             = $false,
-    [switch]$asprep          = $false,
+    [switch]$asrep           = $false,
     [switch]$all             = $false
 )
 $versionnum               = "v5.6"
@@ -1416,21 +1416,28 @@ Function Get-ADCSVulns {#Check for ADCS Vulnerabiltiies, ESC1,2,3,4 and 8. ESC8 
     }
     # ESC8 Check, If error 401 and response is unauthorized, then vulnerable
     try {
-        $certInfo = & certutil
-        $serverName = ($certInfo | Select-String 'Server:' | Select-Object -First 1).ToString().Split(':')[1].Trim().Replace('"', '')
-        $response = Invoke-WebRequest -Uri ("http://$serverName/certsrv/") -ErrorAction Stop
-        $response
-    }
-    catch {
-        # If error and response is unauthorized, then vulnerable
-        if ($_.Exception.Response.StatusCode -eq 401) {
-            Add-Content -Path $web_enrollmeent_path -Value "ESC8 Vulnerable: Endpoint located at http://$serverName/certsrv/"
-            Write-Both "    [!] ESC8 Vulnerable: Endpoint located at http://$serverName/certsrv/"
-        }
-    }
-    Write-Nessus-Finding "Active Directory Certificate Service Web Enrollment Enabled in HTTP" "KB1095" ([System.IO.File]::ReadAllText("$outputdir\web_enrollment.txt"))
-    Write-Nessus-Finding "Active Directory Certificate Service Vulnerable Templates" "KB1096" ([System.IO.File]::ReadAllText("$outputdir\vulnerable_templates.txt"))
+    $certInfo = & certutil
+    $serverName = ($certInfo | Select-String 'Server:' | Select-Object -First 1).ToString().Split(':')[1].Trim().Replace('"', '')
+    $response = Invoke-WebRequest -Uri ("http://$serverName/certsrv/") -ErrorAction Stop
+    $response
 }
+catch {
+    # If error and response is unauthorised, then vulnerable
+    if ($_.Exception.Response.StatusCode -eq 401) {
+        Add-Content -Path $web_enrollmeent_path -Value "ESC8 Vulnerable: Endpoint located at http://$serverName/certsrv/"
+        Write-Both "    [!] ESC8 Vulnerable: Endpoint located at http://$serverName/certsrv/"
+    }
+    else {
+        Write-Both "    [+] ESC8 not vulnerable"
+    }
+    }
+        if (Test-Path "$outputdir\web_enrollment.txt") {
+        Write-Nessus-Finding "Active Directory Certificate Service Web Enrollment Enabled in HTTP" "KB1095" ([System.IO.File]::ReadAllText("$outputdir\web_enrollment.txt"))
+    }
+        if (Test-Path "$outputdir\vulnerable_templates.txt") {
+        Write-Nessus-Finding "Active Directory Certificate Service Vulnerable Templates" "KB1096" ([System.IO.File]::ReadAllText("$outputdir\vulnerable_templates.txt"))
+    }
+ }
 
 Function Get-SPNs {
     $default_groups = @("Domain Admins", "Domain Admins", "Enterprise Admins", "Schema Admins", "Domain Controllers", "Backup Operators", "Account Operators", "Server Operators", "Print Operators", "Remote Desktop Users", "Network Configuration Operators", "Exchange Organization Admins", "Exchange View-Only Admins", "Exchange Recipient Admins", "Exchange Servers", "Exchange Trusted Subsystem", "Exchange Public Folder Admins", "Exchange UM Management")
@@ -1476,8 +1483,7 @@ Function Get-SPNs {
         }
         $base_groups = $new_groups
     }
-
-
+    
     $SPNs = Get-ADObject -Filter { serviceprincipalname -like "*" } -Properties MemberOf |
     Where-Object { $_.ObjectClass -eq "user" } |
     ForEach-Object {
@@ -1512,6 +1518,7 @@ Function Get-SPNs {
     }
     Write-Nessus-Finding  "Kerberoast Attack - Services Configured With a Weak Password" "KB611" ([System.IO.File]::ReadAllText("$outputdir\SPNs.txt"))
 }
+
 function Get-ADUsersWithoutPreAuth {
     $ASREP = Get-ADUser -Filter * -Properties DoesNotRequirePreAuth, Enabled | Where-Object { $_.DoesNotRequirePreAuth -eq "True" -and $_.Enabled -eq "True" } | Select-Object Name
     foreach ($user in $ASREP) {
@@ -1519,7 +1526,12 @@ function Get-ADUsersWithoutPreAuth {
         Write-both $asrepuser
         add-content -path $outputdir\ASREP.txt -value $user.Name
     }
-    Write-Nessus-Finding  "AS-REP Roasting Attack" "KB720" ([System.IO.File]::ReadAllText("$outputdir\ASREP.txt"))
+    if (-not (Test-Path "$outputdir\ASREP.txt") -or !(Get-Content "$outputdir\ASREP.txt")) {
+        Write-Both "    [+] No ASREP Accounts"
+    }
+    else {
+        Write-Nessus-Finding "AS-REP Roasting Attack" "KB720" ([System.IO.File]::ReadAllText("$outputdir\ASREP.txt"))
+    }
 }
 
 $outputdir  = (Get-Item -Path ".\").FullName + "\" + $env:computername
@@ -1558,7 +1570,7 @@ if($authpolsilos -or $all)   { $running=$true ; Write-Both "[*] Check For Existe
 if($insecurednszone -or $all){ $running=$true ; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
 if($recentchanges -or $all)  { $running=$true ; Write-Both "[*] Check For newly created users and groups"                ; Get-RecentChanges }
 if($spn -or $all)            { $running=$true ; Write-Both "[*] Check high value kerberoastable user accounts"           ; Get-SPNs }
-if($asprep -or $all)         { $running=$true ; Write-Both "[*] Check for accounts with kerberos pre-auth"               ; Get-ADUsersWithoutPreAuth }
+if($asrep -or $all)         { $running=$true ; Write-Both "[*] Check for accounts with kerberos pre-auth"               ; Get-ADUsersWithoutPreAuth }
 if($adcs -or $all)           { $running=$true ; Write-Both "[*] Check For ADCS Vulnerabilities"                          ; Get-ADCSVulns }
 if(!$running){ Write-Both "[!] No arguments selected"
     Write-Both "[!] Other options are as follows, they can be used in combination"
@@ -1577,7 +1589,7 @@ if(!$running){ Write-Both "[!] No arguments selected"
     Write-Both "    -insecurednszone checks for insecure DNS zones"
     Write-Both "    -recentchanges checks for newly created users and groups (last 30 days)"
     Write-Both "    -spn checks for kerberoastable high value accounts"
-    Write-Both "    -asprep checks for accounts with kerberos pre-auth"
+    Write-Both "    -asrep checks for accounts with kerberos pre-auth"
     Write-Both "    -ADCS checks for ESC1,2,3,4 and 8"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
 }
