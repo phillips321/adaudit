@@ -64,6 +64,8 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
 * Check for newly created users and groups
   * Get-RecentChanges
 * Check for ADCS vulnerabiltiies, ESC1,2,3,4 and 8. 
+* Check for high value kerberoastable accounts 
+* Check for ASREPRoastable accounts
 * Check for dangerous ACL permissions on Users, Groups and Computers. 
 
 ## Runtime Args
@@ -83,5 +85,7 @@ The following switches can be used in combination
 * -insecurednszone checks for insecure DNS zones
 * -recentchanges checks for newly created users and groups (last 30 days)
 * -adcs checks for ADCS vulnerabiltiies, ESC1,2,3,4 and 8.
-* -acl hecks for dangerous ACL permissions on Users, Groups and Computers. 
+* -acl checks for dangerous ACL permissions on Users, Groups and Computers. 
+* -spn checks for high value kerberoastable accounts 
+* -asrep checks for ASREPRoastable accounts
 * -all runs all checks, e.g. AdAudit.ps1 -all
