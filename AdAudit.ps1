@@ -11,7 +11,10 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.7 - 12/03/2023
+            [x] Version 5.8 - 27/03/2023
+                * Updated switches, users can now select functions, or run -all with exclusions
+                * Added LDAP security checks 
+            [ ] Version 5.7 - 11/03/2023
                 * Added ACL Checks
             [ ] Version 5.6 - 09/03/2023
                 * Added kerberoasting checks
@@ -148,9 +151,16 @@ Param (
     [switch]$spn = $false,
     [switch]$asrep = $false,
     [switch]$acl = $false,
-    [switch]$all = $false
+    [switch]$ldapsecurity = $false,
+    [switch]$all = $false,
+    [string[]]$exclude = @(),
+    [string]$select
 )
-$versionnum = "v5.7"
+
+$selectedChecks = @()
+if ($select) { $selectedChecks = $select.Split(',') }
+
+$versionnum = "v5.8"
 $AdministratorTranslation = @("Administrator", "Administrateur", "Administrador")#If missing put the default Administrator name for your own language here
 
 Function Get-Variables() {
@@ -1611,6 +1621,98 @@ function Get-ADUsersWithoutPreAuth {
     }
 }
 
+function Get-LDAPSecurity {
+    # Check if LDAP signing is enabled
+    $computerName = $env:COMPUTERNAME
+    
+    # Check if LDAP signing is enabled
+    try {
+        $ldapSigning = (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters -Name "LDAPServerIntegrity" -ErrorAction Stop).LDAPServerIntegrity
+
+        if ($ldapSigning -eq 2) {
+            Write-both "    [+] LDAP signing is enabled on $computerName"
+        }
+        else {
+            Write-Both "    [!] Issue identified LDAP signing is not enabled on $computerName, the registry value is currently set to $ldapSigning."
+            Add-Content -Path $outputdir\LDAPSecurity.txt -Value "LDAP signing is not enabled on $computerName, the registry key does not exist"
+            Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAP signing is not enabled on $computerName, the registry key does not exist"
+        }
+    }
+    catch {
+        Write-both "    [!] Issue identified LDAP signing is not enabled on $computerName, the registry key does not exist."
+        Add-Content -Path $outputdir\LDAPSecurity.txt -Value "LDAP signing is not enabled on $computerName, the registry key does not exist"
+        Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAP signing is not enabled on $computerName, the registry key does not exist"
+    }
+
+    # Check if LDAPS is configured
+    $serverAuthOid = '1.3.6.1.5.5.7.3.1'
+    $ldapsCert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object {
+        $_.Extensions -like "System.Security.Cryptography.Oid*" -and
+        $_.Extensions.Oid.Value -eq $serverAuthOid
+    }
+
+    if ($ldapsCert) {
+        Write-both "    [+] LDAPS is configured on $computerName"
+    }
+    else {
+        Write-both "    [!] Issue identified LDAPS is not configured on $computerName, LDAPs certificates are not configured"
+        Add-Content -Path $outputdir\LDAPSecurity.txt -Value "LDAPS is not configured on $computerName, LDAPs certificates are not configured"
+        Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAPS is not configured on $computerName, LDAPs certificates are not configured"
+    }
+
+
+    # Check if LDAPS Channel binding is enabled
+    try {
+        $ldapsBinding = (Get-ItemProperty "HKLM:\System\CurrentControlSet\Services\NTDS\Parameters" -Name "LdapEnforceChannelBinding" -ErrorAction Stop).LdapEnforceChannelBinding
+
+        if ($ldapsBinding -eq 2) {
+            Write-both "    [+] LDAPS channel binding is enabled on $computerName"
+        }
+        else {
+            Write-both "    [!] Issue identified LDAPS channel binding is not enabled on $computerName, currently set to $ldapsBinding"
+            Add-Content -Path $outputdir\LDAPSecurity.txt -Value "LDAPS channel binding is not enabled on $computerName, currently set to $ldapsBinding"
+            Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAPS channel binding is not enabled on $computerName, currently set to $ldapsBinding"
+        }
+    }
+    catch {
+        Write-both "    [!] Issue identified LDAPS channel binding is not enabled on $computerName, the registry key does not exist"
+        Add-Content -Path $outputdir\LDAPSecurity.txt -Value "LDAPS channel binding is not enabled on $computerName, the registry key does not exist"
+        Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAPS channel binding is not enabled on $computerName, the registry key does not exist"
+    }
+
+
+    # Check for LDAP null sessions
+    $Server = (Get-ADDomainController -Discover).HostName
+    $Port = 389
+
+    try {
+        # Load required assemblies
+        Add-Type -AssemblyName System.DirectoryServices.Protocols
+
+        # Create LDAP connection
+        $ldapConnection = New-Object System.DirectoryServices.Protocols.LdapConnection("$Server`:$Port")
+
+        # Set connection timeout
+        $ldapConnection.Timeout = [System.TimeSpan]::FromSeconds(5)
+
+        # Create an empty NetworkCredential for anonymous bind
+        $anonymousCredential = New-Object System.Net.NetworkCredential("", "")
+
+        # Bind to the LDAP server anonymously
+        $ldapConnection.Bind($anonymousCredential)
+
+        Write-both "    [!] Issue identified LDAP null session allowed on server $Server`:$Port"
+        Add-Content -Path $outputdir\LDAPSecurity.txt -Value "null session allowed on server $Server`:$Port"
+        Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAP null session allowed on server $Server`:$Port"
+    }
+    catch [System.DirectoryServices.Protocols.LdapException] {
+        Write-both "    [+] LDAP null session not allowed on server $Server`:$Port"
+    }
+    catch {
+        Write-both "Error occurred: $_"
+    }
+}
+
 function Find-DangerousACLPermissions {
     #Specify the ACLs and Groups to check against
     $dangerousAces = @('GenericAll', 'GenericWrite', 'ForceChangePassword', 'WriteDacl', 'WriteOwner', 'Delete')
@@ -1670,7 +1772,6 @@ function Find-DangerousACLPermissions {
         Write-Progress -Activity "Searching for dangerous ACL permissions on groups" -Status "Groups searched: $($groups.IndexOf($group) + 1)/$($groups.Count)" -PercentComplete (($groups.IndexOf($group) + 1) / $groups.Count * 100)
     }
     # Find dangerous permissions on users
-    $userSearchBase = "CN=Users,$((Get-ADDomain).DistinguishedName)"
     $users = Get-ADObject -Filter { objectClass -eq 'user' -and objectCategory -eq 'person' } -Properties *
 
     $userResults = foreach ($user in $users) {
@@ -1746,23 +1847,24 @@ Write-Host "[+] Outputting to $outputdir"
 Write-Both "[*] Lang specific variables"
 Get-Variables
 if ($installdeps) { $running = $true ; Write-Both "[*] Installing optionnal features"                           ; Install-Dependencies }
-if ($hostdetails -or $all) { $running = $true ; Write-Both "[*] Device Information"                                      ; Get-HostDetails }
-if ($domainaudit -or $all) { $running = $true ; Write-Both "[*] Domain Audit"                                            ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support ; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Check-Shares ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC }
-if ($trusts -or $all) { $running = $true ; Write-Both "[*] Domain Trust Audit"                                      ; Get-DomainTrusts }
-if ($accounts -or $all) { $running = $true ; Write-Both "[*] Accounts Audit"                                          ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-LockedAccounts ; Get-AdminAccountChecks ; Get-NULLSessions ; Get-PrivilegedGroupAccounts ; Get-ProtectedUsers }
-if ($passwordpolicy -or $all) { $running = $true ; Write-Both "[*] Password Information Audit"                              ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently ; Get-PasswordPolicy ; Get-PasswordQuality }
-if ($ntds -or $all) { $running = $true ; Write-Both "[*] Trying to save NTDS.dit, please wait..."                 ; Get-NTDSdit }
-if ($oldboxes -or $all) { $running = $true ; Write-Both "[*] Computer Objects Audit"                                  ; Get-OldBoxes }
-if ($gpo -or $all) { $running = $true ; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)"           ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS; Get-GPOEnum }
-if ($ouperms -or $all) { $running = $true ; Write-Both "[*] Check Generic Group AD Permissions"                      ; Get-OUPerms }
-if ($laps -or $all) { $running = $true ; Write-Both "[*] Check For Existence of LAPS in domain"                   ; Get-LAPSStatus }
-if ($authpolsilos -or $all) { $running = $true ; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
-if ($insecurednszone -or $all) { $running = $true ; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
-if ($recentchanges -or $all) { $running = $true ; Write-Both "[*] Check For newly created users and groups"                ; Get-RecentChanges }
-if ($spn -or $all) { $running = $true ; Write-Both "[*] Check high value kerberoastable user accounts"           ; Get-SPNs }
-if ($asrep -or $all) { $running = $true ; Write-Both "[*] Check for accounts with kerberos pre-auth"               ; Get-ADUsersWithoutPreAuth }
-if ($acl -or $all) { $running = $true ; Write-Both "[*] Check for dangerous ACL permissions on Computers, Users and Groups"  ; Find-DangerousACLPermissions }
-if ($adcs -or $all) { $running = $true ; Write-Both "[*] Check For ADCS Vulnerabilities"                          ; Get-ADCSVulns }
+if ($hostdetails -or ($all -and 'hostdetails' -notin $exclude) -or 'hostdetails' -in $selectedChecks) { $running = $true ; Write-Both "[*] Device Information" ; Get-HostDetails }
+if ($domainaudit -or ($all -and 'domainaudit' -notin $exclude) -or 'domainaudit' -in $selectedChecks) { $running = $true ; Write-Both "[*] Domain Audit" ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support ; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Check-Shares ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC }
+if ($trusts -or ($all -and 'trusts' -notin $exclude) -or 'trusts' -in $selectedChecks) { $running = $true ; Write-Both "[*] Domain Trust Audit" ; Get-DomainTrusts }
+if ($accounts -or ($all -and 'accounts' -notin $exclude) -or 'accounts' -in $selectedChecks) { $running = $true ; Write-Both "[*] Accounts Audit" ; Get-InactiveAccounts ; Get-DisabledAccounts ; Get-LockedAccounts ; Get-AdminAccountChecks ; Get-NULLSessions ; Get-PrivilegedGroupAccounts ; Get-ProtectedUsers }
+if ($passwordpolicy -or ($all -and 'passwordpolicy' -notin $exclude) -or 'passwordpolicy' -in $selectedChecks) { $running = $true ; Write-Both "[*] Password Information Audit" ; Get-AccountPassDontExpire ; Get-UserPasswordNotChangedRecently ; Get-PasswordPolicy ; Get-PasswordQuality }
+if ($ntds -or ($all -and 'ntds' -notin $exclude) -or 'ntds' -in $selectedChecks) { $running = $true ; Write-Both "[*] Trying to save NTDS.dit, please wait..." ; Get-NTDSdit }
+if ($oldboxes -or ($all -and 'oldboxes' -notin $exclude) -or 'oldboxes' -in $selectedChecks) { $running = $true ; Write-Both "[*] Computer Objects Audit" ; Get-OldBoxes }
+if ($gpo -or ($all -and 'gpo' -notin $exclude) -or 'gpo' -in $selectedChecks) { $running = $true ; Write-Both "[*] GPO audit (and checking SYSVOL for passwords)" ; Get-GPOtoFile ; Get-GPOsPerOU ; Get-SYSVOLXMLS; Get-GPOEnum }
+if ($ouperms -or ($all -and 'ouperms' -notin $exclude) -or 'ouperms' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check Generic Group AD Permissions" ; Get-OUPerms }
+if ($laps -or ($all -and 'laps' -notin $exclude) -or 'laps' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check For Existence of LAPS in domain" ; Get-LAPSStatus }
+if ($authpolsilos -or ($all -and 'authpolsilos' -notin $exclude) -or 'authpolsilos' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check For Existence of Authentication Polices and Silos" ; Get-AuthenticationPoliciesAndSilos }
+if ($insecurednszone -or ($all -and 'insecurednszone' -notin $exclude) -or 'insecurednszone' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check For Existence DNS Zones allowing insecure updates" ; Get-DNSZoneInsecure }
+if ($recentchanges -or ($all -and 'recentchanges' -notin $exclude) -or 'recentchanges' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check For newly created users and groups"                ; Get-RecentChanges }
+if ($spn -or ($all -and 'spn' -notin $exclude) -or 'spn' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check high value kerberoastable user accounts"           ; Get-SPNs }
+if ($asrep -or ($all -and 'asrep' -notin $exclude) -or 'asrep' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check for accounts with kerberos pre-auth"               ; Get-ADUsersWithoutPreAuth }
+if ($acl -or ($all -and 'acl' -notin $exclude) -or 'acl' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check for dangerous ACL permissions on Computers, Users and Groups"  ; Find-DangerousACLPermissions }
+if ($adcs -or ($all -and 'adcs' -notin $exclude) -or 'adcs' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check for ADCS Vulnerabilities"                          ; Get-ADCSVulns }
+if ($ldapsecurity -or ($all -and 'ldapecurity' -notin $exclude) -or 'adcs' -in $selectedChecks) { $running = $true ; Write-Both "[*] Check for LDAP Security Issues"                          ; Get-LDAPSecurity }
 if (!$running) {
     Write-Both "[!] No arguments selected"
     Write-Both "[!] Other options are as follows, they can be used in combination"
@@ -1784,7 +1886,10 @@ if (!$running) {
     Write-Both "    -asrep checks for accounts with kerberos pre-auth"
     Write-Both "    -acl checks for dangerous ACL permissions on Computers, Users and Groups"
     Write-Both "    -ADCS checks for ESC1,2,3,4 and 8"
+    Write-Both "    -ldapsecurity checks for multiple LDAP issues"
     Write-Both "    -all runs all checks, e.g. $scriptname -all"
+    Write-Both "    -exclude allows you to exclude specific checks when using -all, e.g. $scriptname -all -exclude hostdetails,ntds"
+    Write-Both "    -select allows you to exclude specific checks when using -all, e.g. $scriptname -all `"-gpo,ntds,acl`""
 }
 Write-Nessus-Footer
 
