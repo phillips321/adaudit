@@ -91,5 +91,5 @@ The following switches can be used in combination
 * -asrep checks for ASREPRoastable accounts
 * -ldapsecurity checks for multiple LDAP issues
 * -exclude allows you to exclude specific checks when using -all, e.g. adaudit.ps1 -all -exclude hostdetails,ntds,adcs"
-* -select allows you to exclude specific checks when using -all, e.g. adaudit.ps1 -all "-gpo,ntds,acl"
+* -select allows you to exclude specific checks when using -all, e.g. adaudit.ps1 -all "gpo,ntds,acl"
 * -all runs all checks, e.g. AdAudit.ps1 -all
