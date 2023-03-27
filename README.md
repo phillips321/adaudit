@@ -67,6 +67,7 @@ Run directly on a DC using a DA. If you don't trust the code I suggest reading i
 * Check for high value kerberoastable accounts 
 * Check for ASREPRoastable accounts
 * Check for dangerous ACL permissions on Users, Groups and Computers. 
+* Check LDAP and LDAPs settings (Signing, null sessions etc )
 
 ## Runtime Args
 The following switches can be used in combination
@@ -88,4 +89,7 @@ The following switches can be used in combination
 * -acl checks for dangerous ACL permissions on Users, Groups and Computers. 
 * -spn checks for high value kerberoastable accounts 
 * -asrep checks for ASREPRoastable accounts
+* -ldapsecurity checks for multiple LDAP issues
+* -exclude allows you to exclude specific checks when using -all, e.g. adaudit.ps1 -all -exclude hostdetails,ntds,adcs"
+* -select allows you to exclude specific checks when using -all, e.g. adaudit.ps1 -all "-gpo,ntds,acl"
 * -all runs all checks, e.g. AdAudit.ps1 -all
