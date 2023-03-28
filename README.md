@@ -90,6 +90,6 @@ The following switches can be used in combination
 * -spn checks for high value kerberoastable accounts 
 * -asrep checks for ASREPRoastable accounts
 * -ldapsecurity checks for multiple LDAP issues
-* -exclude allows you to exclude specific checks when using -all, e.g. adaudit.ps1 -all -exclude hostdetails,ntds,adcs"
-* -select allows you to exclude specific checks when using -all, e.g. adaudit.ps1 -all "gpo,ntds,acl"
+* -exclude allows you to exclude specific checks when using adaudit.ps1 -all -exclude ouperms,ntds,adcs"
+* -select allows you to exclude specific checks when using adaudit.ps1 -all "gpo,ntds,acl"
 * -all runs all checks, e.g. AdAudit.ps1 -all
