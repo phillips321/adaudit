@@ -11,7 +11,10 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.9 - 20/12/2023
+            [x] Version 6.0 - 22/12/2023
+                * Fix "BUILTIN\$Administrators" quoting, in order to use $Administrators variable when script enumerates Default Domain Controllers Policy
+                * Fix RDP logon policy check in the same function above
+            [ ] Version 5.9 - 20/12/2023
                 * Contempled all cases of DCs with weak Kerberos algorithm and saves finding according to them
                 * Fix "Cannot get time source for DC" as a warning
             [ ] Version 5.8 - 27/03/2023
@@ -163,7 +166,7 @@ Param (
 $selectedChecks = @()
 if ($select) { $selectedChecks = $select.Split(',') }
 
-$versionnum = "v5.9"
+$versionnum = "v6.0"
 $AdministratorTranslation = @("Administrator", "Administrateur", "Administrador")#If missing put the default Administrator name for your own language here
 
 Function Get-Variables() {
@@ -1107,7 +1110,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeInteractiveLogonRight' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators' -and $member.Name.'#text' -ne "$EntrepriseDomainControllers") {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators" -and $member.Name.'#text' -ne "$EntrepriseDomainControllers") {
                 $ExcessiveDCInteractiveLogon = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeInteractiveLogonRight $($member.Name.'#text')"
             }
@@ -1118,20 +1121,20 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeBatchLogonRight' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCBatchLogonPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeBatchLogonRight $($member.Name.'#text')"
             }
         }
     }
     #RDP logon
-    $permissionindex = $GPOreport.IndexOf('SeInteractiveLogonRight')
+    $permissionindex = $GPOreport.IndexOf('SeRemoteInteractiveLogonRight')
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
-        foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeInteractiveLogonRight' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators' -and $member.Name.'#text' -ne "$EntrepriseDomainControllers") {
+        foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeRemoteInteractiveLogonRight' }).Member)) {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators" -and $member.Name.'#text' -ne "$EntrepriseDomainControllers") {
                 $ExcessiveDCRDPLogonPermissions = $true
-                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeInteractiveLogonRight $($member.Name.'#text')"
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeRemoteInteractiveLogonRight $($member.Name.'#text')"
             }
         }
     }
@@ -1140,7 +1143,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeBackupPrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCBackupPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeBackupPrivilege $($member.Name.'#text')"
             }
@@ -1151,7 +1154,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeRestorePrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCRestorePermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeRestorePrivilege $($member.Name.'#text')"
             }
@@ -1162,7 +1165,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeLoadDriverPrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCDriverPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeLoadDriverPrivilege $($member.Name.'#text')"
             }
@@ -1173,7 +1176,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeShutdownPrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCLocalShutdownPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeShutdownPrivilege $($member.Name.'#text')"
             }
@@ -1184,7 +1187,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeRemoteShutdownPrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCRemoteShutdownPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeRemoteShutdownPrivilege $($member.Name.'#text')"
             }
@@ -1195,7 +1198,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeSystemTimePrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators' -and $member.Name.'#text' -ne "$LocalService") {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators" -and $member.Name.'#text' -ne "$LocalService") {
                 $ExcessiveDCTimePermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeSystemTimePrivilege $($member.Name.'#text')"
             }
