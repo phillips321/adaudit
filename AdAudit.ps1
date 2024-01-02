@@ -11,7 +11,13 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 5.8 - 27/03/2023
+            [x] Version 6.0 - 22/12/2023
+                * Fix "BUILTIN\$Administrators" quoting, in order to use $Administrators variable when script enumerates Default Domain Controllers Policy
+                * Fix RDP logon policy check in the same function above
+            [ ] Version 5.9 - 20/12/2023
+                * Contempled all cases of DCs with weak Kerberos algorithm and saves finding according to them
+                * Fix "Cannot get time source for DC" as a warning
+            [ ] Version 5.8 - 27/03/2023
                 * Updated switches, users can now select functions, or run -all with exclusions
                 * Added LDAP security checks 
             [ ] Version 5.7 - 11/03/2023
@@ -160,7 +166,7 @@ Param (
 $selectedChecks = @()
 if ($select) { $selectedChecks = $select.Split(',') }
 
-$versionnum = "v5.8"
+$versionnum = "v6.0"
 $AdministratorTranslation = @("Administrator", "Administrateur", "Administrador")#If missing put the default Administrator name for your own language here
 
 Function Get-Variables() {
@@ -871,7 +877,7 @@ Function Get-GPOEnum {
                 $NTLMAuthExceptions += $member
             }
         }
-        #Validate Kerberos Encryption algorythm
+        #Validate Kerberos Encryption algorithm
         $permissionindex = $GPOreport.IndexOf('MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters\SupportedEncryptionTypes')
         if ($permissionindex -gt 0) {
             $EncryptionTypesNotConfigured = $false
@@ -937,10 +943,9 @@ Function Get-GPOEnum {
         Write-Both "    [!] No GPO restricts Domain, Schema and Enterprise network logon across domain!!!"
         Write-Nessus-Finding "AdminLogon" "KB479" "No GPO restricts Domain, Schema and Enterprise network logon across domain!"
     }
-    #Output for Validate Kerberos Encryption algorythm
+    #Output for Validate Kerberos Encryption algorithm
     if ($EncryptionTypesNotConfigured) {
         Write-Both "    [!] RC4_HMAC_MD5 enabled for Kerberos across domain!!!"
-        Write-Nessus-Finding "WeakKerberosEncryption" "KB995" "RC4_HMAC_MD5 enabled for Kerberos across domain!"
     }
     #Output for deny NTLM
     if ($DenyNTLM.count -eq 0) {
@@ -1065,17 +1070,22 @@ Function Get-DCEval {
     if (($ADs | Where-Object { $_.OperationMasterRoles -ne $null } | measure).count -eq 1) {
         Write-Both "    [!] DC $($ADs | Where-Object {$_.OperationMasterRoles -ne $null} | select -ExpandProperty Hostname) holds all FSMO roles!"
     }
-    #DCs with weak Kerberos algorhythm (*CH* Changed below to look for msDS-SupportedEncryptionTypes to work with 2008R2)
+    #DCs with weak Kerberos algorithm (*CH* Changed below to look for msDS-SupportedEncryptionTypes to work with 2008R2)
     $ADcomputers = $ADs | ForEach-Object { Get-ADComputer $_.Name -Properties msDS-SupportedEncryptionTypes }
     $WeakKerberos = $false
     foreach ($DC in $ADcomputers) {
-        #(*CH* Need to define all combinations here, only done 28 and 31 so far) (31 = "DES, RC4, AES128, AES256", 28 = "RC4, AES128, AES256")
-        if ( $DC."msDS-SupportedEncryptionTypes" -eq 28 -or $DC."msDS-SupportedEncryptionTypes" -eq 31 ) {
+        #Value 8 stands for AES-128, value 16 stands for AES-256 and value 24 stands for AES-128 & AES-256
+        #Values 0 to 7, 9 to 15, 17 to 23 and 25 to 31 include RC4 and/or DES
+        #See https://techcommunity.microsoft.com/t5/core-infrastructure-and-security/decrypting-the-selection-of-supported-kerberos-encryption-types/ba-p/1628797
+        if ($DC."msDS-SupportedEncryptionTypes" -ne 8 -and $DC."msDS-SupportedEncryptionTypes" -ne 16 -and $DC."msDS-SupportedEncryptionTypes" -ne 24) {
             $WeakKerberos = $true
             Add-Content -Path "$outputdir\dcs_weak_kerberos_ciphersuite.txt" -Value "$($DC.DNSHostName) $($dc."msDS-SupportedEncryptionTypes")"
         }
     }
-    Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!"
+    if ($WeakKerberos) {
+        Write-Both "    [!] You have DCs with RC4 or DES allowed for Kerberos!!!"
+        Write-Nessus-Finding "WeakKerberosEncryption" "KB995" ([System.IO.File]::ReadAllText("$outputdir\dcs_weak_kerberos_ciphersuite.txt"))
+    }
     #Check where newly joined computers go
     $newComputers = (Get-ADDomain).ComputersContainer
     $newUsers = (Get-ADDomain).UsersContainer
@@ -1100,7 +1110,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeInteractiveLogonRight' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators' -and $member.Name.'#text' -ne "$EntrepriseDomainControllers") {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators" -and $member.Name.'#text' -ne "$EntrepriseDomainControllers") {
                 $ExcessiveDCInteractiveLogon = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeInteractiveLogonRight $($member.Name.'#text')"
             }
@@ -1111,20 +1121,20 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeBatchLogonRight' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCBatchLogonPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeBatchLogonRight $($member.Name.'#text')"
             }
         }
     }
     #RDP logon
-    $permissionindex = $GPOreport.IndexOf('SeInteractiveLogonRight')
+    $permissionindex = $GPOreport.IndexOf('SeRemoteInteractiveLogonRight')
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
-        foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeInteractiveLogonRight' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators' -and $member.Name.'#text' -ne "$EntrepriseDomainControllers") {
+        foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeRemoteInteractiveLogonRight' }).Member)) {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators" -and $member.Name.'#text' -ne "$EntrepriseDomainControllers") {
                 $ExcessiveDCRDPLogonPermissions = $true
-                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeInteractiveLogonRight $($member.Name.'#text')"
+                Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeRemoteInteractiveLogonRight $($member.Name.'#text')"
             }
         }
     }
@@ -1133,7 +1143,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeBackupPrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCBackupPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeBackupPrivilege $($member.Name.'#text')"
             }
@@ -1144,7 +1154,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeRestorePrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCRestorePermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeRestorePrivilege $($member.Name.'#text')"
             }
@@ -1155,7 +1165,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeLoadDriverPrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCDriverPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeLoadDriverPrivilege $($member.Name.'#text')"
             }
@@ -1166,7 +1176,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeShutdownPrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCLocalShutdownPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeShutdownPrivilege $($member.Name.'#text')"
             }
@@ -1177,7 +1187,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeRemoteShutdownPrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators') {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators") {
                 $ExcessiveDCRemoteShutdownPermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeRemoteShutdownPrivilege $($member.Name.'#text')"
             }
@@ -1188,7 +1198,7 @@ Function Get-DefaultDomainControllersPolicy {
     if ($permissionindex -gt 0 -and $GPO.DisplayName -eq 'Default Domain Controllers Policy') {
         $xmlreport = [xml]$GPOreport
         foreach ($member in (($xmlreport.GPO.Computer.ExtensionData.Extension.UserRightsAssignment | Where-Object { $_.Name -eq 'SeSystemTimePrivilege' }).Member)) {
-            if ($member.Name.'#text' -ne 'BUILTIN\$Administrators' -and $member.Name.'#text' -ne "$LocalService") {
+            if ($member.Name.'#text' -ne "BUILTIN\$Administrators" -and $member.Name.'#text' -ne "$LocalService") {
                 $ExcessiveDCTimePermissions = $true
                 Add-Content -Path "$outputdir\default_domain_controller_policy_audit.txt" -Value "SeSystemTimePrivilege $($member.Name.'#text')"
             }
@@ -1319,7 +1329,7 @@ Function Get-TimeSource {
     foreach ($DC in $dcList) {
         $ntpSource = w32tm /query /source /computer:$DC
         if ($ntpSource -like '*0x800706BA*') {
-            Write-Both "        [+] Cannot get time source for $DC"
+            Write-Both "        [!] Cannot get time source for $DC"
         }
         else {
             Write-Both "        [+] $DC is syncing time from $ntpSource"
