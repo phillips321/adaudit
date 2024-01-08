@@ -1,5 +1,5 @@
 # adaudit
-PowerShell Script to perform a quick AD audit
+This PowerShell script is designed to conduct a comprehensive audit of Microsoft Active Directory, focusing on identifying common security vulnerabilities and weaknesses. Its execution facilitates the pinpointing of critical areas that require reinforcement, thereby fortifying your infrastructure against prevalent tactics used in lateral movement or privilege escalation attacks targeting Active Directory.
 ```
 _____ ____     _____       _ _ _
 |  _  |    \   |  _  |_ _ _| |_| |_
