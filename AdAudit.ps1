@@ -201,7 +201,7 @@ Function Get-Variables() {
     Write-Both "    [+] Domain Controllers           : $DomainControllers"
     Write-Both "    [+] Schema Admins                : $SchemaAdmins"
     Write-Both "    [+] Enterprise Admins            : $EnterpriseAdmins"
-    Write-Both "    [+] Every One                    : $EveryOne"
+    Write-Both "    [+] Everyone                     : $EveryOne"
     Write-Both "    [+] Entreprise Domain Controllers: $EntrepriseDomainControllers"
     Write-Both "    [+] Authenticated Users          : $AuthenticatedUsers"
     Write-Both "    [+] System                       : $System"
@@ -1732,7 +1732,7 @@ function Find-DangerousACLPermissions {
     $computers = Get-ADObject -Filter { objectClass -eq 'computer' -and objectCategory -eq 'computer' } -Properties *
     $computerResults = foreach ($computer in $computers) {
         try {
-            $acl = Get-Acl -Path "AD:\$($computer.DistinguishedName)"
+            $acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($computer.DistinguishedName)"
         }
         catch {
             Write-Warning "Could not retrieve ACL for computer '$computer': $_"
@@ -1759,7 +1759,7 @@ function Find-DangerousACLPermissions {
     $groups = Get-ADObject -Filter { objectClass -eq 'group' -and objectCategory -eq 'group' } -Properties *
     $groupResults = foreach ($group in $groups) {
         try {
-            $acl = Get-Acl -Path "AD:\$($group.DistinguishedName)"
+            $acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($group.DistinguishedName)"
         }
         catch {
             Write-Warning "Could not retrieve ACL for group '$group': $_"
@@ -1786,7 +1786,7 @@ function Find-DangerousACLPermissions {
 
     $userResults = foreach ($user in $users) {
         $acl = $null
-        $acl = Get-Acl -Path "AD:\$($user.DistinguishedName)"
+        $acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($user.DistinguishedName)"
         if ($acl) {
             $dangerousRules = $acl.Access | Where-Object { $_.ActiveDirectoryRights -in $dangerousAces -and $_.IdentityReference -in $groupsToCheck }
             if ($dangerousRules) {
