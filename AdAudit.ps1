@@ -11,7 +11,9 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 6.0 - 22/12/2023
+            [x] Version 6.1 - 26/02/2024
+                * Added Server 2012 to End of Life list
+            [ ] Version 6.0 - 22/12/2023
                 * Fix "BUILTIN\$Administrators" quoting, in order to use $Administrators variable when script enumerates Default Domain Controllers Policy
                 * Fix RDP logon policy check in the same function above
             [ ] Version 5.9 - 20/12/2023
@@ -725,7 +727,7 @@ Function Get-AccountPassDontExpire {
 Function Get-OldBoxes {
     #Lists 2000/2003/XP/Vista/7/2008 machines
     $count = 0
-    $oldboxes = Get-ADComputer -Filter { OperatingSystem -Like "*2003*" -and Enabled -eq "true" -or OperatingSystem -Like "*XP*" -and Enabled -eq "true" -or OperatingSystem -Like "*2000*" -and Enabled -eq "true" -or OperatingSystem -like '*Windows 7*' -and Enabled -eq "true" -or OperatingSystem -like '*vista*' -and Enabled -eq "true" -or OperatingSystem -like '*2008*' -and Enabled -eq "true" } -Property OperatingSystem
+    $oldboxes = Get-ADComputer -Filter { OperatingSystem -Like "*2003*" -and Enabled -eq "true" -or OperatingSystem -Like "*XP*" -and Enabled -eq "true" -or OperatingSystem -Like "*2000*" -and Enabled -eq "true" -or OperatingSystem -like '*Windows 7*' -and Enabled -eq "true" -or OperatingSystem -like '*vista*' -and Enabled -eq "true" -or OperatingSystem -like '*2008*' -and Enabled -eq "true" -or OperatingSystem -like '*2012*' -and Enabled -eq "true"} -Property OperatingSystem
     $totalcount = ($oldboxes | Measure-Object | Select-Object Count).count
     foreach ($machine in $oldboxes) {
         if ($totalcount -eq 0) { break }
