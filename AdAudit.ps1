@@ -11,7 +11,10 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 6.1 - 26/02/2024
+            [x] Version 6.2 - 15/11/2024
+                * Fixes for Get-Acl not working on Server 2016
+                * Commented out section in Get-SPN that was taking forever to complete
+            [ ] Version 6.1 - 26/02/2024
                 * Added Server 2012 to End of Life list
             [ ] Version 6.0 - 22/12/2023
                 * Fix "BUILTIN\$Administrators" quoting, in order to use $Administrators variable when script enumerates Default Domain Controllers Policy
@@ -261,7 +264,7 @@ Function Get-OUPerms {
         $progresscount++
         Write-Progress -Activity "Searching for non standard permissions for authenticated users..." -Status "Currently identifed $count" -PercentComplete ($progresscount / $totalcount * 100)
         if ($OSVersion -like "Windows Server 2019*" -or $OSVersion -like "Windows Server 2022*") {
-            $output = (Get-Acl "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$object").Access | Where-Object { ($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users") } | Where-Object { ($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny') }
+            $output = (Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$object").Access | Where-Object { ($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users") } | Where-Object { ($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny') }
         }
         else {
             $output = (Get-Acl AD:$object).Access                                                                    | Where-Object { ($_.IdentityReference -eq "$AuthenticatedUsers") -or ($_.IdentityReference -eq "$EveryOne") -or ($_.IdentityReference -like "*\$DomainUsers") -or ($_.IdentityReference -eq "BUILTIN\$Users") } | Where-Object { ($_.ActiveDirectoryRights -ne 'GenericRead') -and ($_.ActiveDirectoryRights -ne 'GenericExecute') -and ($_.ActiveDirectoryRights -ne 'ExtendedRight') -and ($_.ActiveDirectoryRights -ne 'ReadControl') -and ($_.ActiveDirectoryRights -ne 'ReadProperty') -and ($_.ActiveDirectoryRights -ne 'ListObject') -and ($_.ActiveDirectoryRights -ne 'ListChildren') -and ($_.ActiveDirectoryRights -ne 'ListChildren, ReadProperty, ListObject') -and ($_.ActiveDirectoryRights -ne 'ReadProperty, GenericExecute') -and ($_.AccessControlType -ne 'Deny') }
@@ -533,7 +536,7 @@ Function Get-UserPasswordNotChangedRecently {
     $totalcount = ($accountsoldpasswords | Measure-Object | Select-Object Count).count
     foreach ($account in $accountsoldpasswords) {
         if ($totalcount -eq 0) { break }
-        Write-Progress -Activity "Searching for passwords older than 90days..." -Status "Currently identifed $count" -PercentComplete ($count / $totalcount * 100)
+        Write-Progress -Activity "Searching for passwords older than 90days..." -Status "Currently identified $count" -PercentComplete ($count / $totalcount * 100)
         if ($account.PasswordLastSet) {
             $datelastchanged = $account.PasswordLastSet
         }
@@ -1563,26 +1566,26 @@ Function Get-SPNs {
         catch {}
     }
 
-    while ($base_groups.count -gt 0) {
-        $new_groups = @()
-        foreach ($group in $base_groups) {
-            # I dont want to see errors if a group is not found
-            try {
-                $ADGrp = Get-ADGroup -Identity $group -ErrorAction SilentlyContinue
-                $QueryResult = Get-ADGroup -LDAPFilter "(&(objectCategory=group)(memberof=$($ADGrp.DistinguishedName)))"
-                foreach ($result in $QueryResult) {
-                    $all_groups += $result.Name
-                    $new_groups += $result.Name
-                }
-            }
-            catch {
-                # Remove group from all_groups
-                $all_groups = $all_groups | Where-Object { $_ -ne $group }
-            }
-        }
-        $base_groups = $new_groups
-    }
-    
+#    while ($base_groups.count -gt 0) {
+#        $new_groups = @()
+#        foreach ($group in $base_groups) {
+#            # I dont want to see errors if a group is not found
+#            try {
+#                $ADGrp = Get-ADGroup -Identity $group -ErrorAction SilentlyContinue
+#                $QueryResult = Get-ADGroup -LDAPFilter "(&(objectCategory=group)(memberof=$($ADGrp.DistinguishedName)))"
+#                foreach ($result in $QueryResult) {
+#                    $all_groups += $result.Name
+#                    $new_groups += $result.Name
+#                }
+#            }
+#            catch {
+#                # Remove group from all_groups
+#                $all_groups = $all_groups | Where-Object { $_ -ne $group }
+#            }
+#        }
+#        $base_groups = $new_groups
+#    }
+#    
     $SPNs = Get-ADObject -Filter { serviceprincipalname -like "*" } -Properties MemberOf |
     Where-Object { $_.ObjectClass -eq "user" } |
     ForEach-Object {
@@ -1733,13 +1736,9 @@ function Find-DangerousACLPermissions {
     # Find dangerous permissions on Computers
     $computers = Get-ADObject -Filter { objectClass -eq 'computer' -and objectCategory -eq 'computer' } -Properties *
     $computerResults = foreach ($computer in $computers) {
-        try {
-            $acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($computer.DistinguishedName)"
-        }
-        catch {
-            Write-Warning "Could not retrieve ACL for computer '$computer': $_"
-            continue
-        }
+        if ($OSVersion -like "Windows Server 2019*" -or $OSVersion -like "Windows Server 2022*") {
+	$acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($computer.DistinguishedName)"} else {
+	$acl = Get-Acl AD:\$computer}
 
         $dangerousRules = $acl.Access | Where-Object { $_.ActiveDirectoryRights -in $dangerousAces -and $_.IdentityReference -in $groupsToCheck }
 
@@ -1760,13 +1759,9 @@ function Find-DangerousACLPermissions {
     # Find dangerous permissions on groups
     $groups = Get-ADObject -Filter { objectClass -eq 'group' -and objectCategory -eq 'group' } -Properties *
     $groupResults = foreach ($group in $groups) {
-        try {
-            $acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($group.DistinguishedName)"
-        }
-        catch {
-            Write-Warning "Could not retrieve ACL for group '$group': $_"
-            continue
-        }
+        if ($OSVersion -like "Windows Server 2019*" -or $OSVersion -like "Windows Server 2022*") {
+	$acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($group.DistinguishedName)"} else {
+	$acl = Get-Acl AD:\$group}
 
         $dangerousRules = $acl.Access | Where-Object { $_.ActiveDirectoryRights -in $dangerousAces -and $_.IdentityReference -in $groupsToCheck }
 
@@ -1788,7 +1783,11 @@ function Find-DangerousACLPermissions {
 
     $userResults = foreach ($user in $users) {
         $acl = $null
-        $acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($user.DistinguishedName)"
+
+        if ($OSVersion -like "Windows Server 2019*" -or $OSVersion -like "Windows Server 2022*") {
+	$acl = Get-Acl -Path "Microsoft.ActiveDirectory.Management.dll\ActiveDirectory:://RootDSE/$($user.DistinguishedName)"} else {
+	$acl = Get-Acl AD:\$user}
+
         if ($acl) {
             $dangerousRules = $acl.Access | Where-Object { $_.ActiveDirectoryRights -in $dangerousAces -and $_.IdentityReference -in $groupsToCheck }
             if ($dangerousRules) {
