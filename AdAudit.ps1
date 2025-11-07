@@ -12,6 +12,18 @@
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
             [x] Version 6.3 - 07/11/2025
+                * Force true anonymous bind: set AuthType=Anonymous and Credential=[NetworkCredential]::new($null,$null)
+                * Use LdapDirectoryIdentifier($Server, $Port) instead of "$Server:$Port" string to avoid parsing quirks
+                * Disable referral chasing to prevent OperationsError from referral handling (ReferralChasing=None)
+                * Replace paged control with SizeLimit=1 and TimeLimit for a minimal, predictable read
+                * Perform a real directory read under defaultNamingContext (not just RootDSE) to confirm effective anonymous access
+                * Add precise result handling: Success vs InvalidCredentials (49) vs StrongerAuthRequired (8) vs OperationsError (1)
+                * Coerce DC HostName to string using -ExpandProperty to fix ADPropertyValueCollection output
+                * Minor robustness: ProtocolVersion=3, short timeouts, and safe Join-Path for output file
+                * Fixed LDAPS certificate detection logic:
+                   - Corrected EKU filtering to properly check for OID 1.3.6.1.5.5.7.3.1 (Server Authentication).
+                   - Added validation for certificate expiry (NotAfter > current date).
+                   - Added check to ensure certificate has a private key.
                 * Added explicit success message for DSRM on DCs:
                    Prints "[+] Windows LAPS DSRM configuration on Domain Controllers looks OK..."
                    when DFL ≥ 2016 and all DCs have a DSRM secret backed up AND none are expired.
@@ -1923,15 +1935,21 @@ function Get-LDAPSecurity {
     # Check if LDAPS is configured
     $serverAuthOid = '1.3.6.1.5.5.7.3.1'
     $ldapsCert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object {
-        $_.Extensions -like "System.Security.Cryptography.Oid*" -and
-        $_.Extensions.Oid.Value -eq $serverAuthOid
+        $_.HasPrivateKey -and
+        $_.NotAfter -gt (Get-Date) -and
+        (
+            $_.Extensions |
+            Where-Object {
+                $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] -and
+                ($_.EnhancedKeyUsages | Where-Object { $_.Value -eq $serverAuthOid })
+            }
+        )
     }
 
     if ($ldapsCert) {
-        Write-both "    [+] LDAPS is configured on $computerName"
-    }
-    else {
-        Write-both "    [!] Issue identified LDAPS is not configured on $computerName, LDAPs certificates are not configured"
+        Write-Both "    [+] LDAPS is configured on $computerName"
+    } else {
+        Write-Both "    [!] Issue identified LDAPS is not configured on $computerName, LDAPs certificates are not configured"
         Add-Content -Path $outputdir\LDAPSecurity.txt -Value "LDAPS is not configured on $computerName, LDAPs certificates are not configured"
         Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAPS is not configured on $computerName, LDAPs certificates are not configured"
     }
@@ -1957,36 +1975,102 @@ function Get-LDAPSecurity {
     }
 
 
-    # Check for LDAP null sessions
-    $Server = (Get-ADDomainController -Discover).HostName
-    $Port = 389
+    # Check for LDAP null sessions (anonymous bind with effective read)
+    $Server = Get-ADDomainController -Discover | Select-Object -ExpandProperty HostName -First 1
+    $Port   = 389  # Use 636 + SSL if you want to test LDAPS
 
     try {
-        # Load required assemblies
         Add-Type -AssemblyName System.DirectoryServices.Protocols
 
-        # Create LDAP connection
-        $ldapConnection = New-Object System.DirectoryServices.Protocols.LdapConnection("$Server`:$Port")
+        # Create LDAP connection (explicit host/port)
+        $id   = New-Object System.DirectoryServices.Protocols.LdapDirectoryIdentifier($Server, $Port)
+        $conn = New-Object System.DirectoryServices.Protocols.LdapConnection($id)
 
-        # Set connection timeout
-        $ldapConnection.Timeout = [System.TimeSpan]::FromSeconds(5)
+        # Force a true anonymous bind (no fallback to current logon)
+        $conn.AuthType   = [System.DirectoryServices.Protocols.AuthType]::Anonymous
+        $conn.Credential = [System.Net.NetworkCredential]::new($null, $null)
+        $conn.Timeout    = [TimeSpan]::FromSeconds(5)
+        $conn.SessionOptions.ProtocolVersion = 3
+        $conn.SessionOptions.ReferralChasing = [System.DirectoryServices.Protocols.ReferralChasingOptions]::None
+        # For LDAPS testing, uncomment and set $Port=636:
+        # $conn.SessionOptions.SecureSocketLayer = $true
+        # (Lab-only) ignore cert trust:
+        # $conn.SessionOptions.VerifyServerCertificate = { param($c,$cert) $true }
 
-        # Create an empty NetworkCredential for anonymous bind
-        $anonymousCredential = New-Object System.Net.NetworkCredential("", "")
+        # Anonymous bind
+        $conn.Bind()
 
-        # Bind to the LDAP server anonymously
-        $ldapConnection.Bind($anonymousCredential)
+     # Discover default naming context from RootDSE (safe for discovery only)
+        $rootReq = New-Object System.DirectoryServices.Protocols.SearchRequest("", "(objectClass=*)", "Base", "defaultNamingContext")
+        $rootRes = $conn.SendRequest($rootReq)
 
-        Write-both "    [!] Issue identified LDAP null session allowed on server $Server`:$Port"
-        Add-Content -Path $outputdir\LDAPSecurity.txt -Value "null session allowed on server $Server`:$Port"
-        Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAP null session allowed on server $Server`:$Port"
+        $defaultNC = $null
+        if ($rootRes -and $rootRes.Entries.Count -gt 0) {
+            $entry = $rootRes.Entries[0]
+            if ($entry.Attributes -and $entry.Attributes.Contains("defaultNamingContext")) {
+                $vals = $entry.Attributes["defaultNamingContext"].GetValues([string])
+                if ($vals -and $vals.Count -gt 0) { $defaultNC = $vals[0] }
+            }
+        }
+
+        if (-not $defaultNC) {
+         Write-Both "    [+] LDAP null session not useful on $Server`:$Port (no naming context visible)"
+         Add-Content -Path (Join-Path $outputdir 'LDAPSecurity.txt') -Value "Anonymous bind present but NC not visible on $Server`:$Port"
+         return
+        }
+
+        # Attempt a real directory read under default NC (no paging; limit to 1 entry)
+        $req = New-Object System.DirectoryServices.Protocols.SearchRequest(
+            $defaultNC,
+            "(objectClass=*)",
+            [System.DirectoryServices.Protocols.SearchScope]::Subtree,
+            @("distinguishedName")
+        )
+        $req.SizeLimit = 1
+        $req.TimeLimit = [TimeSpan]::FromSeconds(3)
+
+        $res = $conn.SendRequest($req)
+
+        if ($res.ResultCode -eq [System.DirectoryServices.Protocols.ResultCode]::Success -and
+            $res.Entries.Count -gt 0) {
+
+            Write-Both "    [!] LDAP anonymous (null) bind allows directory READ on $Server`:$Port"
+            Add-Content -Path (Join-Path $outputdir 'LDAPSecurity.txt') -Value "Anonymous bind allows directory read on $Server`:$Port"
+            Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "Anonymous LDAP bind allows directory read on $Server`:$Port"
+
+        } else {
+            Write-Both ("    [+] LDAP null session not allowed/useful on {0}:{1} - Result: {2} ({3}) Msg: {4}" -f `
+             $Server, $Port, [int]$res.ResultCode, $res.ResultCode, $res.ErrorMessage)
+        }
+    }
+    catch [System.DirectoryServices.Protocols.DirectoryOperationException] {
+        # Typically indicates anonymous bind succeeded, but search was blocked (your DSID-0C090D44 case)
+        $resp = $_.Exception.Response
+        if ($resp) {
+         Write-Both ("    [+] LDAP null session not allowed/useful on {0}:{1} - Result: {2} ({3}) Msg: {4}" -f `
+                $Server, $Port, [int]$resp.ResultCode, $resp.ResultCode, $resp.ErrorMessage)
+            Add-Content -Path (Join-Path $outputdir 'LDAPSecurity.txt') -Value "Anonymous bind present but read blocked on $Server`:$Port"
+        } else {
+            Write-Both "    [+] LDAP null session not allowed/useful on $Server`:$Port (directory operation blocked)"
+        }
     }
     catch [System.DirectoryServices.Protocols.LdapException] {
-        Write-both "    [+] LDAP null session not allowed on server $Server`:$Port"
+        switch ($_.Exception.ErrorCode) {
+            49 {  # InvalidCredentials -> anonymous fully disabled
+                Write-Both "    [+] LDAP anonymous bind NOT allowed on $Server`:$Port (InvalidCredentials)"
+            }
+            8 {   # StrongerAuthRequired -> signing/TLS required; try LDAPS if you want to check further
+                Write-Both "    [+] LDAP anonymous bind refused on $Server`:$Port (StrongerAuthRequired - signing/LDAPS required)"
+            }
+            default {
+                Write-Both ("    [i] LDAP error on {0}:{1} - {2} (code {3})" -f $Server, $Port, $_.Exception.Message, $_.Exception.ErrorCode)
+            }
+        }
     }
-    catch {
-        Write-both "Error occurred: $_"
+    finally {
+        if ($conn) { $conn.Dispose() }
     }
+
 }
 
 function Find-DangerousACLPermissions {
