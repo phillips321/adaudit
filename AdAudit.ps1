@@ -313,21 +313,6 @@ function Get-LAPSStatus {
     }
     if (-not (Test-Path $outputdir)) { New-Item -ItemType Directory -Path $outputdir | Out-Null }
 
-    # Fallbacks if custom functions aren't in scope
-    function _WriteBoth([string]$msg) {
-        if (Get-Command Write-Both -ErrorAction SilentlyContinue) { Write-Both $msg }
-        else { Write-Host $msg }
-    }
-    function _WriteNessus([string]$id,[string]$kb,[string]$txt) {
-        if (Get-Command Write-Nessus-Finding -ErrorAction SilentlyContinue) {
-            Write-Nessus-Finding $id $kb $txt
-        } else {
-            # No Nessus function available; log to a text file instead
-            $line = "[$(Get-Date -Format s)] $id $kb `n$txt`n"
-            Add-Content -Path (Join-Path $outputdir 'nessus_fallback-findings.txt') -Value $line
-        }
-    }
-
     # Helper: identify DCs using userAccountControl SERVER_TRUST_ACCOUNT (0x2000)
     function Test-IsDomainController {
         param(
@@ -366,21 +351,21 @@ function Get-LAPSStatus {
         if ($winAttrPwd -and $winAttrExp) { $winLapsSchemaPresent = $true }
     } catch { }
 
-    if ($legacyLapsSchemaPresent) { _WriteBoth "    [+] Legacy LAPS schema is present in the domain." }
+    if ($legacyLapsSchemaPresent) { Write-Both "    [+] Legacy LAPS schema is present in the domain." }
     else {
-        _WriteBoth "    [!] Legacy LAPS schema not found (AdmPwd)."
-        _WriteNessus "LAPSMissing" "KB258" "Legacy LAPS schema not found in domain $forestDN"
+        Write-Both "    [!] Legacy LAPS schema not found (AdmPwd)."
+        Write-Nessus-Finding "LAPSMissing" "KB258" "Legacy LAPS schema not found in domain $forestDN"
     }
 
-    if ($winLapsSchemaPresent) { _WriteBoth "    [+] Windows LAPS schema is present in the domain." }
+    if ($winLapsSchemaPresent) { Write-Both "    [+] Windows LAPS schema is present in the domain." }
     else {
-        _WriteBoth "    [!] Windows LAPS schema not found."
-        _WriteNessus "WindowsLAPSMissing" "KB258" "Windows LAPS schema not found in domain $forestDN"
+        Write-Both "    [!] Windows LAPS schema not found."
+        Write-Nessus-Finding "WindowsLAPSMissing" "KB258" "Windows LAPS schema not found in domain $forestDN"
     }
 
     if ($legacyLapsSchemaPresent -and -not $winLapsSchemaPresent) {
-        _WriteBoth "    [>] Legacy LAPS is present but Windows LAPS is not. Recommendation: plan migration to Windows LAPS for encryption, DSRM support, and built-in management."
-        _WriteNessus "LAPSUpgradeRecommended" "KB258" "Legacy LAPS present; Windows LAPS not detected. Recommend upgrading."
+        Write-Both "    [>] Legacy LAPS is present but Windows LAPS is not. Recommendation: plan migration to Windows LAPS for encryption, DSRM support, and built-in management."
+        Write-Nessus-Finding "LAPSUpgradeRecommended" "KB258" "Legacy LAPS present; Windows LAPS not detected. Recommend upgrading."
     }
 
     # --- determine if DSRM checks should be enforced on DCs ----------------------
@@ -390,8 +375,8 @@ function Get-LAPSStatus {
     if ($domainModeName -match '2016|2019|2022|2025') { $dsrmSupported = $true }  # coarse but effective
 
     if ($winLapsSchemaPresent -and -not $dsrmSupported) {
-        _WriteBoth "    [i] Domain Functional Level is earlier than 2016; Windows LAPS DSRM management isn't supported. DCs will not be flagged for missing DSRM backup."
-        _WriteNessus "WindowsLAPSDSRMNotSupported" "KB258" "DFL < 2016. DC DSRM backup via Windows LAPS isn't supported; skipping DC DSRM 'missing' findings."
+        Write-Both "    [i] Domain Functional Level is earlier than 2016; Windows LAPS DSRM management isn't supported. DCs will not be flagged for missing DSRM backup."
+        Write-Nessus-Finding "WindowsLAPSDSRMNotSupported" "KB258" "DFL < 2016. DC DSRM backup via Windows LAPS isn't supported; skipping DC DSRM 'missing' findings."
     }
 
     # --- Legacy LAPS deep checks (if module available) ---------------------------
@@ -411,8 +396,8 @@ function Get-LAPSStatus {
                              Select-Object -ExpandProperty Name
             if ($legacyMissing) {
                 $legacyMissing | Set-Content -Path $missingLegacyFile
-                _WriteBoth  "    [!] Some computers/servers don't have a LEGACY LAPS password set, see $missingLegacyFile"
-                _WriteNessus "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText($missingLegacyFile))
+                Write-Both  "    [!] Some computers/servers don't have a LEGACY LAPS password set, see $missingLegacyFile"
+                Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText($missingLegacyFile))
             }
 
             # Expired legacy LAPS passwords (exclude DCs)
@@ -431,8 +416,8 @@ function Get-LAPSStatus {
             }
             if ($legacyExpired) {
                 $legacyExpired | Set-Content -Path $legacyExpiredFile
-                _WriteBoth  "    [!] Some computers/servers have LEGACY LAPS password expired, see $legacyExpiredFile"
-                _WriteNessus "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText($legacyExpiredFile))
+                Write-Both  "    [!] Some computers/servers have LEGACY LAPS password expired, see $legacyExpiredFile"
+                Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText($legacyExpiredFile))
             }
 
             # Extended rights (legacy) - explicit -Identity
@@ -454,12 +439,12 @@ function Get-LAPSStatus {
                 } catch { continue }
             }
             if (Test-Path $legacyRightsFile) {
-                _WriteBoth  "    [!] LEGACY LAPS extended rights exported, see $legacyRightsFile"
-                _WriteNessus "LAPSExtendedRights" "KB258" ([System.IO.File]::ReadAllText($legacyRightsFile))
+                Write-Both  "    [!] LEGACY LAPS extended rights exported, see $legacyRightsFile"
+                Write-Nessus-Finding "LAPSExtendedRights" "KB258" ([System.IO.File]::ReadAllText($legacyRightsFile))
             }
 
         } else {
-            _WriteBoth "    [!] AdmPwd.PS module is not installed on this host; limited legacy LAPS checks only."
+            Write-Both "    [!] AdmPwd.PS module is not installed on this host; limited legacy LAPS checks only."
         }
     }
 
@@ -503,15 +488,15 @@ function Get-LAPSStatus {
 
         if ($aggregateMissing) {
             $aggregateMissing | Set-Content -Path $winMissingFile
-            _WriteBoth  "    [!] Some computers/servers don't have a WINDOWS LAPS password backed up (or DSRM on DCs where supported), see $winMissingFile"
-            _WriteNessus "WindowsLAPSMissingOrNotBackedUp" "KB258" ([System.IO.File]::ReadAllText($winMissingFile))
+            Write-Both  "    [!] Some computers/servers don't have a WINDOWS LAPS password backed up (or DSRM on DCs where supported), see $winMissingFile"
+            Write-Nessus-Finding "WindowsLAPSMissingOrNotBackedUp" "KB258" ([System.IO.File]::ReadAllText($winMissingFile))
         }
 
         # Write DC-specific missing file if applicable
         if ($dcMissingDSRM) {
             $dcMissingDSRM | Set-Content -Path $dcMissingDSRMFile
-            _WriteBoth  "    [!] Domain Controllers missing DSRM backup via Windows LAPS: see $dcMissingDSRMFile"
-            _WriteNessus "WindowsLAPSDSRMissing" "KB258" ([System.IO.File]::ReadAllText($dcMissingDSRMFile))
+            Write-Both  "    [!] Domain Controllers missing DSRM backup via Windows LAPS: see $dcMissingDSRMFile"
+            Write-Nessus-Finding "WindowsLAPSDSRMissing" "KB258" ([System.IO.File]::ReadAllText($dcMissingDSRMFile))
         }
 
         # ---- Expired (both DC and non-DC share the same expiration attribute)
@@ -547,15 +532,15 @@ function Get-LAPSStatus {
 
         if ($aggregateExpired) {
             $aggregateExpired | Set-Content -Path $winExpiredFile
-            _WriteBoth  "    [!] Some computers/servers have WINDOWS LAPS password expired (or DSRM on DCs), see $winExpiredFile"
-            _WriteNessus "WindowsLAPSMissingOrExpired" "KB258" ([System.IO.File]::ReadAllText($winExpiredFile))
+            Write-Both  "    [!] Some computers/servers have WINDOWS LAPS password expired (or DSRM on DCs), see $winExpiredFile"
+            Write-Nessus-Finding "WindowsLAPSMissingOrExpired" "KB258" ([System.IO.File]::ReadAllText($winExpiredFile))
         }
 
         # DC-specific expired DSRM file
         if ($dcExpiredDSRMLines) {
             $dcExpiredDSRMLines | Set-Content -Path $dcExpiredDSRMFile
-            _WriteBoth  "    [!] Domain Controllers with EXPIRED DSRM secret: see $dcExpiredDSRMFile"
-            _WriteNessus "WindowsLAPSDSRMExpired" "KB258" ([System.IO.File]::ReadAllText($dcExpiredDSRMFile))
+            Write-Both  "    [!] Domain Controllers with EXPIRED DSRM secret: see $dcExpiredDSRMFile"
+            Write-Nessus-Finding "WindowsLAPSDSRMExpired" "KB258" ([System.IO.File]::ReadAllText($dcExpiredDSRMFile))
         }
 
         # --- NEW: Positive confirmation for DSRM status on DCs -------------------
@@ -565,10 +550,10 @@ function Get-LAPSStatus {
             $noDCExpired    = (-not $dcExpiredDSRMLines -or $dcExpiredDSRMLines.Count -eq 0)
 
             if ($allDCsHaveDSRM -and $noDCExpired) {
-                _WriteBoth "    [+] Windows LAPS DSRM configuration on Domain Controllers looks OK (all DCs have DSRM secret backed up, none expired)."
+                Write-Both "    [+] Windows LAPS DSRM configuration on Domain Controllers looks OK (all DCs have DSRM secret backed up, none expired)."
             }
         } else {
-            _WriteBoth "    [i] DSRM checks skipped (Domain Functional Level < 2016). See Microsoft guidance: DSRM management requires DFL 2016 or later."
+            Write-Both "    [i] DSRM checks skipped (Domain Functional Level < 2016). See Microsoft guidance: DSRM management requires DFL 2016 or later."
         }
 
         # Extended rights (Windows LAPS) - explicit -Identity
@@ -594,17 +579,17 @@ function Get-LAPSStatus {
             }
 
             if (Test-Path $winRightsFile) {
-                _WriteBoth  "    [!] WINDOWS LAPS extended rights exported, see $winRightsFile"
-                _WriteNessus "WindowsLAPSExtendedRights" "KB258" ([System.IO.File]::ReadAllText($winRightsFile))
+                Write-Both  "    [!] WINDOWS LAPS extended rights exported, see $winRightsFile"
+                Write-Nessus-Finding "WindowsLAPSExtendedRights" "KB258" ([System.IO.File]::ReadAllText($winRightsFile))
             } else {
-                _WriteBoth "    [+] No non-system extended rights discovered for Windows LAPS password read on any OU."
+                Write-Both "    [+] No non-system extended rights discovered for Windows LAPS password read on any OU."
             }
         } else {
-            _WriteBoth "    [!] LAPS module not found; skipping Windows LAPS extended rights export. (Import the built‑in 'LAPS' module on this host to enable.)"
+            Write-Both "    [!] LAPS module not found; skipping Windows LAPS extended rights export. (Import the built‑in 'LAPS' module on this host to enable.)"
         }
     }
 
-    _WriteBoth "    [+] LAPS checks complete."
+    Write-Both "    [+] LAPS checks complete."
 }
 Function Get-PrivilegedGroupAccounts {
     #Lists users in Admininstrators, DA and EA groups
