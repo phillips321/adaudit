@@ -11,7 +11,35 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
-            [x] Version 6.2 - 15/11/2024
+            [x] Version 6.3 - 07/11/2025
+                * Force true anonymous bind: set AuthType=Anonymous and Credential=[NetworkCredential]::new($null,$null)
+                * Use LdapDirectoryIdentifier($Server, $Port) instead of "$Server:$Port" string to avoid parsing quirks
+                * Disable referral chasing to prevent OperationsError from referral handling (ReferralChasing=None)
+                * Replace paged control with SizeLimit=1 and TimeLimit for a minimal, predictable read
+                * Perform a real directory read under defaultNamingContext (not just RootDSE) to confirm effective anonymous access
+                * Add precise result handling: Success vs InvalidCredentials (49) vs StrongerAuthRequired (8) vs OperationsError (1)
+                * Coerce DC HostName to string using -ExpandProperty to fix ADPropertyValueCollection output
+                * Minor robustness: ProtocolVersion=3, short timeouts, and safe Join-Path for output file
+                * Fixed LDAPS certificate detection logic:
+                   - Corrected EKU filtering to properly check for OID 1.3.6.1.5.5.7.3.1 (Server Authentication).
+                   - Added validation for certificate expiry (NotAfter > current date).
+                   - Added check to ensure certificate has a private key.
+                * Added explicit success message for DSRM on DCs:
+                   Prints "[+] Windows LAPS DSRM configuration on Domain Controllers looks OK..."
+                   when DFL ≥ 2016 and all DCs have a DSRM secret backed up AND none are expired.
+                * Introduced separate DC DSRM reports:
+                   - winlaps_dcs_missing-dsrm.txt
+                   - winlaps_dcs_expired-dsrm.txt
+                  DC entries are also included in aggregate Windows LAPS files where appropriate.
+                * DSRM checks gated by DFL ≥ 2016 per Microsoft guidance.
+                * Fixed Windows LAPS rights export:
+                   - Now binds -Identity explicitly for Find-LapsADExtendedRights.
+                   - Prevents "Cannot bind argument to parameter 'Identity' ... empty array" errors.
+                * Implemented DC-aware logic:
+                   - Legacy LAPS checks (missing/expired) skip domain controllers (legacy LAPS doesn't apply to DCs).
+                   - Windows LAPS distinguishes DC DSRM backups (msLAPS-EncryptedDSRMPassword) from non-DC backups
+                    (msLAPS-Password / msLAPS-EncryptedPassword). Uses msLAPS-PasswordExpirationTime for expiry.
+            [ ] Version 6.2 - 15/11/2024
                 * Fixes for Get-Acl not working on Server 2016
                 * Commented out section in Get-SPN that was taking forever to complete
             [ ] Version 6.1 - 26/02/2024
@@ -281,54 +309,299 @@ Function Get-OUPerms {
         Write-Nessus-Finding "OUPermissions" "KB551" ([System.IO.File]::ReadAllText("$outputdir\ou_permissions.txt"))
     }
 }
-Function Get-LAPSStatus {
-    #Check for presence of LAPS in domain
+function Get-LAPSStatus {
+
+    # --- prerequisites & helpers -------------------------------------------------
+    $ErrorActionPreference = 'Stop'
+
+    try { Import-Module ActiveDirectory -ErrorAction Stop } catch {
+        Write-Warning "ActiveDirectory module is required for LAPS checks."
+        return
+    }
+
+    # Default $outputdir if not set by caller
+    if (-not (Get-Variable -Name outputdir -ErrorAction SilentlyContinue)) {
+        $script:outputdir = Join-Path $env:TEMP "laps-audit"
+    }
+    if (-not (Test-Path $outputdir)) { New-Item -ItemType Directory -Path $outputdir | Out-Null }
+
+    # Helper: identify DCs using userAccountControl SERVER_TRUST_ACCOUNT (0x2000)
+    function Test-IsDomainController {
+        param(
+            [Parameter(Mandatory)]
+            [Microsoft.ActiveDirectory.Management.ADComputer]$Computer
+        )
+        $uac = 0
+        if ($Computer.userAccountControl) { $uac = [int]$Computer.userAccountControl }
+        if ( ($uac -band 0x2000) -ne 0 ) { return $true } else { return $false }
+    }
+
+    # Convenience
+    $rootDse   = Get-ADRootDSE
+    $dnConfig  = $rootDse.configurationNamingContext
+    $schemaBase = "CN=Schema,$dnConfig"
+    $forestDN  = (Get-ADDomain).DistinguishedName
+
+    # Principals to ignore in rights exports
+    $systemPrincipals = @('NT AUTHORITY\SYSTEM','SYSTEM','S-1-5-18')
+
+    # --- schema detection ---------------------------------------------------------
+    $legacyLapsSchemaPresent = $false
+    $winLapsSchemaPresent    = $false
+
     try {
-        Get-ADObject "CN=ms-Mcs-AdmPwd,CN=Schema,CN=Configuration,$((Get-ADDomain).DistinguishedName)" -ErrorAction Stop | Out-Null
-        Write-Both "    [+] LAPS Installed in domain"
+        # Legacy LAPS attributes exist?
+        $legacyAttr = Get-ADObject -LDAPFilter '(lDAPDisplayName=ms-Mcs-AdmPwd)' -SearchBase $schemaBase -ErrorAction Stop
+        $legacyExp  = Get-ADObject -LDAPFilter '(lDAPDisplayName=ms-Mcs-AdmPwdExpirationTime)' -SearchBase $schemaBase -ErrorAction Stop
+        if ($legacyAttr -and $legacyExp) { $legacyLapsSchemaPresent = $true }
+    } catch { }
+
+    try {
+        # Windows LAPS attributes exist?
+        $winAttrPwd = Get-ADObject -LDAPFilter '(lDAPDisplayName=msLAPS-Password)' -SearchBase $schemaBase -ErrorAction Stop
+        $winAttrExp = Get-ADObject -LDAPFilter '(lDAPDisplayName=msLAPS-PasswordExpirationTime)' -SearchBase $schemaBase -ErrorAction Stop
+        if ($winAttrPwd -and $winAttrExp) { $winLapsSchemaPresent = $true }
+    } catch { }
+
+    if ($legacyLapsSchemaPresent) { Write-Both "    [+] Legacy LAPS schema is present in the domain." }
+    else {
+        Write-Both "    [!] Legacy LAPS schema not found (AdmPwd)."
+        Write-Nessus-Finding "LAPSMissing" "KB258" "Legacy LAPS schema not found in domain $forestDN"
     }
-    catch {
-        Write-Both "    [!] LAPS Not Installed in domain (KB258)"
-        Write-Nessus-Finding "LAPSMissing" "KB258" "LAPS Not Installed in domain"
+
+    if ($winLapsSchemaPresent) { Write-Both "    [+] Windows LAPS schema is present in the domain." }
+    else {
+        Write-Both "    [!] Windows LAPS schema not found."
+        Write-Nessus-Finding "WindowsLAPSMissing" "KB258" "Windows LAPS schema not found in domain $forestDN"
     }
-    if (Get-Module -ListAvailable -Name AdmPwd.PS) {
-        Import-Module AdmPwd.PS
-        $count = 0
-        $missingComputers = (Get-ADComputer -Filter { ms-Mcs-AdmPwd -notlike "*" }).Name
-        $totalcount = ($missingComputers | Measure-Object | Select-Object Count).count
-        if ($totalcount -gt 0) {
-            $missingComputers | Add-Content -Path $outputdir\laps_missing-computers.txt
-            Write-Both "    [!] Some computers/servers don't have LAPS password set, see $outputdir\laps_missing-computers.txt"
-            Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText("$outputdir\laps_missing-computers.txt"))
+
+    if ($legacyLapsSchemaPresent -and -not $winLapsSchemaPresent) {
+        Write-Both "    [>] Legacy LAPS is present but Windows LAPS is not. Recommendation: plan migration to Windows LAPS for encryption, DSRM support, and built-in management."
+        Write-Nessus-Finding "LAPSUpgradeRecommended" "KB258" "Legacy LAPS present; Windows LAPS not detected. Recommend upgrading."
+    }
+
+    # --- determine if DSRM checks should be enforced on DCs ----------------------
+    # DSRM password management requires DFL 2016+; otherwise skip DC DSRM 'missing' findings.
+    $domainModeName = (Get-ADDomain).DomainMode.ToString()
+    $dsrmSupported = $false
+    if ($domainModeName -match '2016|2019|2022|2025') { $dsrmSupported = $true }  # coarse but effective
+
+    if ($winLapsSchemaPresent -and -not $dsrmSupported) {
+        Write-Both "    [i] Domain Functional Level is earlier than 2016; Windows LAPS DSRM management isn't supported. DCs will not be flagged for missing DSRM backup."
+        Write-Nessus-Finding "WindowsLAPSDSRMNotSupported" "KB258" "DFL < 2016. DC DSRM backup via Windows LAPS isn't supported; skipping DC DSRM 'missing' findings."
+    }
+
+    # --- Legacy LAPS deep checks (if module available) ---------------------------
+    if ($legacyLapsSchemaPresent) {
+        if (Get-Module -ListAvailable -Name AdmPwd.PS) {
+            Import-Module AdmPwd.PS -ErrorAction SilentlyContinue | Out-Null
+
+            # Pull inventory with UAC to detect DCs
+            $legacyAll = Get-ADComputer -Filter * -Properties 'ms-Mcs-AdmPwd','ms-Mcs-AdmPwdExpirationTime','userAccountControl'
+
+            # Computers missing a legacy LAPS password (exclude DCs)
+            $missingLegacyFile = Join-Path $outputdir 'legacy_laps_missing-computers.txt'
+            Remove-Item $missingLegacyFile -ErrorAction SilentlyContinue
+            $legacyMissing = $legacyAll |
+                             Where-Object { -not (Test-IsDomainController -Computer $_) } |
+                             Where-Object { -not $_.'ms-Mcs-AdmPwd' } |
+                             Select-Object -ExpandProperty Name
+            if ($legacyMissing) {
+                $legacyMissing | Set-Content -Path $missingLegacyFile
+                Write-Both  "    [!] Some computers/servers don't have a LEGACY LAPS password set, see $missingLegacyFile"
+                Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText($missingLegacyFile))
+            }
+
+            # Expired legacy LAPS passwords (exclude DCs)
+            $legacyExpiredFile = Join-Path $outputdir 'legacy_laps_expired-passwords.txt'
+            Remove-Item $legacyExpiredFile -ErrorAction SilentlyContinue
+            $now = Get-Date
+            $legacyExpired = foreach ($c in $legacyAll) {
+                if (Test-IsDomainController -Computer $c) { continue }
+                $expRaw = $c.'ms-Mcs-AdmPwdExpirationTime'
+                if ($expRaw) {
+                    try {
+                        $exp = [DateTime]::FromFileTime([Int64]$expRaw)
+                        if ($exp -lt $now) { "{0} password expired since {1:u}" -f $c.Name, $exp }
+                    } catch { }
+                }
+            }
+            if ($legacyExpired) {
+                $legacyExpired | Set-Content -Path $legacyExpiredFile
+                Write-Both  "    [!] Some computers/servers have LEGACY LAPS password expired, see $legacyExpiredFile"
+                Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText($legacyExpiredFile))
+            }
+
+            # Extended rights (legacy) - explicit -Identity
+            $legacyRightsFile = Join-Path $outputdir 'legacy_laps_read-extendedrights.txt'
+            Remove-Item $legacyRightsFile -ErrorAction SilentlyContinue
+            $ous = Get-ADOrganizationalUnit -Filter * -Properties DistinguishedName |
+                   Where-Object { $_.DistinguishedName -and $_.Name } |
+                   Sort-Object DistinguishedName
+
+            foreach ($ou in $ous) {
+                try {
+                    $res = Find-AdmPwdExtendedRights -Identity $ou.DistinguishedName -ErrorAction Stop
+                    foreach ($holder in $res.ExtendedRightHolders) {
+                        if ($systemPrincipals -notcontains $holder) {
+                            "$holder can read LEGACY LAPS password attribute in $($ou.DistinguishedName)" |
+                                Add-Content -Path $legacyRightsFile
+                        }
+                    }
+                } catch { continue }
+            }
+            if (Test-Path $legacyRightsFile) {
+                Write-Both  "    [!] LEGACY LAPS extended rights exported, see $legacyRightsFile"
+                Write-Nessus-Finding "LAPSExtendedRights" "KB258" ([System.IO.File]::ReadAllText($legacyRightsFile))
+            }
+
+        } else {
+            Write-Both "    [!] AdmPwd.PS module is not installed on this host; limited legacy LAPS checks only."
         }
-        $count = 0
-        $computersList = (Get-ADComputer -Filter { ms-Mcs-AdmPwdExpirationTime -like "*" } -Properties ms-Mcs-AdmPwdExpirationTime | select Name, ms-Mcs-AdmPwdExpirationTime)
-        foreach ($computer in $computersList ) {
-            $expiration = [datetime]::FromFileTime($computer.'ms-Mcs-AdmPwdExpirationTime')
-            $today = Get-Date
-            if ($expiration -lt $today) {
-                $count++
-                "$($computer.Name) password is expired since $expiration" | Add-Content -Path $outputdir\laps_expired-passwords.txt
+    }
+
+    # --- Windows LAPS deep checks (schema-based, module optional) ----------------
+    if ($winLapsSchemaPresent) {
+        $winMissingFile    = Join-Path $outputdir 'winlaps_missing-computers.txt'
+        $winExpiredFile    = Join-Path $outputdir 'winlaps_expired-passwords.txt'
+        $dcMissingDSRMFile = Join-Path $outputdir 'winlaps_dcs_missing-dsrm.txt'
+        $dcExpiredDSRMFile = Join-Path $outputdir 'winlaps_dcs_expired-dsrm.txt'
+        $winRightsFile     = Join-Path $outputdir 'winlaps_read-extendedrights.txt'
+        Remove-Item $winMissingFile,$winExpiredFile,$winRightsFile,$dcMissingDSRMFile,$dcExpiredDSRMFile -ErrorAction SilentlyContinue
+
+        # Pull all computers with Windows LAPS-related attributes (and UAC for DC detection)
+        $props = @('msLAPS-Password','msLAPS-EncryptedPassword','msLAPS-PasswordExpirationTime','msLAPS-EncryptedDSRMPassword','userAccountControl')
+        $allWin = Get-ADComputer -Filter * -Properties $props
+
+        # Partition DCs vs non-DCs
+        $dcComputers    = @()
+        $nonDCComputers = @()
+        foreach ($c in $allWin) {
+            if (Test-IsDomainController -Computer $c) { $dcComputers += $c } else { $nonDCComputers += $c }
+        }
+
+        # ---- Non-DC missing Windows LAPS backup
+        $nonDCMissing = $nonDCComputers | Where-Object {
+            -not $_.'msLAPS-Password' -and -not $_.'msLAPS-EncryptedPassword'
+        } | Select-Object -ExpandProperty Name
+
+        # ---- DC missing DSRM backup (only when supported)
+        $dcMissingDSRM = @()
+        if ($dsrmSupported) {
+            $dcMissingDSRM = $dcComputers | Where-Object {
+                -not $_.'msLAPS-EncryptedDSRMPassword'
+            } | Select-Object -ExpandProperty Name
+        }
+
+        # Combine for the aggregate "missing" file (non-DCs + DCs where supported)
+        $aggregateMissing = @()
+        if ($nonDCMissing) { $aggregateMissing += $nonDCMissing }
+        if ($dcMissingDSRM) { $aggregateMissing += $dcMissingDSRM }
+
+        if ($aggregateMissing) {
+            $aggregateMissing | Set-Content -Path $winMissingFile
+            Write-Both  "    [!] Some computers/servers don't have a WINDOWS LAPS password backed up (or DSRM on DCs where supported), see $winMissingFile"
+            Write-Nessus-Finding "WindowsLAPSMissingOrNotBackedUp" "KB258" ([System.IO.File]::ReadAllText($winMissingFile))
+        }
+
+        # Write DC-specific missing file if applicable
+        if ($dcMissingDSRM) {
+            $dcMissingDSRM | Set-Content -Path $dcMissingDSRMFile
+            Write-Both  "    [!] Domain Controllers missing DSRM backup via Windows LAPS: see $dcMissingDSRMFile"
+            Write-Nessus-Finding "WindowsLAPSDSRMissing" "KB258" ([System.IO.File]::ReadAllText($dcMissingDSRMFile))
+        }
+
+        # ---- Expired (both DC and non-DC share the same expiration attribute)
+        $now = Get-Date
+
+        $nonDCExpiredLines = foreach ($c in $nonDCComputers) {
+            $expRaw = $c.'msLAPS-PasswordExpirationTime'
+            if ($expRaw) {
+                try {
+                    $exp = [DateTime]::FromFileTime([Int64]$expRaw)
+                    if ($exp -lt $now) { "{0} password expired since {1:u}" -f $c.Name, $exp }
+                } catch { }
             }
         }
-        if ($count -gt 0) {
-            Write-Both "    [!] Some computers/servers have LAPS password expired, see $outputdir\laps_expired-passwords.txt"
-            Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText("$outputdir\laps_expired-passwords.txt"))
-        }
-        Get-ADOrganizationalUnit -Filter * | Find-AdmPwdExtendedRights -PipelineVariable OU | foreach {
-            $_.ExtendedRightHolders | foreach {
-                if ($_ -ne $System) {
-                    "$_ can read password attribute of $($Ou.ObjectDN)" | Add-Content -Path $outputdir\laps_read-extendedrights.txt
+
+        $dcExpiredDSRMLines = @()
+        if ($dsrmSupported) {
+            $dcExpiredDSRMLines = foreach ($c in $dcComputers) {
+                $expRaw = $c.'msLAPS-PasswordExpirationTime'
+                if ($expRaw) {
+                    try {
+                        $exp = [DateTime]::FromFileTime([Int64]$expRaw)
+                        if ($exp -lt $now) { "{0} DSRM password expired since {1:u}" -f $c.Name, $exp }
+                    } catch { }
                 }
             }
         }
-        Write-Both "    [!] LAPS extended rights exported, see $outputdir\laps_read-extendedrights.txt"
-        Write-Nessus-Finding "LAPSMissingorExpired" "KB258" ([System.IO.File]::ReadAllText("$outputdir\laps_read-extendedrights.txt"))
 
+        # Aggregate expired
+        $aggregateExpired = @()
+        if ($nonDCExpiredLines) { $aggregateExpired += $nonDCExpiredLines }
+        if ($dcExpiredDSRMLines) { $aggregateExpired += $dcExpiredDSRMLines }
+
+        if ($aggregateExpired) {
+            $aggregateExpired | Set-Content -Path $winExpiredFile
+            Write-Both  "    [!] Some computers/servers have WINDOWS LAPS password expired (or DSRM on DCs), see $winExpiredFile"
+            Write-Nessus-Finding "WindowsLAPSMissingOrExpired" "KB258" ([System.IO.File]::ReadAllText($winExpiredFile))
+        }
+
+        # DC-specific expired DSRM file
+        if ($dcExpiredDSRMLines) {
+            $dcExpiredDSRMLines | Set-Content -Path $dcExpiredDSRMFile
+            Write-Both  "    [!] Domain Controllers with EXPIRED DSRM secret: see $dcExpiredDSRMFile"
+            Write-Nessus-Finding "WindowsLAPSDSRMExpired" "KB258" ([System.IO.File]::ReadAllText($dcExpiredDSRMFile))
+        }
+
+        # --- NEW: Positive confirmation for DSRM status on DCs -------------------
+        if ($dsrmSupported) {
+            # If there were no DCs missing DSRM and none expired, report OK
+            $allDCsHaveDSRM = ($dcComputers.Count -gt 0) -and (-not $dcMissingDSRM -or $dcMissingDSRM.Count -eq 0)
+            $noDCExpired    = (-not $dcExpiredDSRMLines -or $dcExpiredDSRMLines.Count -eq 0)
+
+            if ($allDCsHaveDSRM -and $noDCExpired) {
+                Write-Both "    [+] Windows LAPS DSRM configuration on Domain Controllers looks OK (all DCs have DSRM secret backed up, none expired)."
+            }
+        } else {
+            Write-Both "    [i] DSRM checks skipped (Domain Functional Level < 2016). See Microsoft guidance: DSRM management requires DFL 2016 or later."
+        }
+
+        # Extended rights (Windows LAPS) - explicit -Identity
+        if (Get-Module -ListAvailable -Name LAPS) {
+            Import-Module LAPS -ErrorAction SilentlyContinue | Out-Null
+
+            $ous = Get-ADOrganizationalUnit -Filter * -Properties DistinguishedName |
+                   Where-Object { $_.DistinguishedName -and $_.Name } |
+                   Sort-Object DistinguishedName
+
+            foreach ($ou in $ous) {
+                try {
+                    $result = Find-LapsADExtendedRights -Identity $ou.DistinguishedName -ErrorAction Stop
+                    if ($result -and $result.ExtendedRightHolders) {
+                        foreach ($holder in $result.ExtendedRightHolders) {
+                            if ($systemPrincipals -notcontains $holder) {
+                                "$holder can read WINDOWS LAPS password info in $($ou.DistinguishedName)" |
+                                    Add-Content -Path $winRightsFile
+                            }
+                        }
+                    }
+                } catch { continue }
+            }
+
+            if (Test-Path $winRightsFile) {
+                Write-Both  "    [!] WINDOWS LAPS extended rights exported, see $winRightsFile"
+                Write-Nessus-Finding "WindowsLAPSExtendedRights" "KB258" ([System.IO.File]::ReadAllText($winRightsFile))
+            } else {
+                Write-Both "    [+] No non-system extended rights discovered for Windows LAPS password read on any OU."
+            }
+        } else {
+            Write-Both "    [!] LAPS module not found; skipping Windows LAPS extended rights export. (Import the built‑in 'LAPS' module on this host to enable.)"
+        }
     }
-    else {
-        Write-Both "    [!] LAPS PowerShell module is not installed, can't run LAPS checks on this DC"
-    }
+
+    Write-Both "    [+] LAPS checks complete."
 }
 Function Get-PrivilegedGroupAccounts {
     #Lists users in Admininstrators, DA and EA groups
@@ -1662,15 +1935,21 @@ function Get-LDAPSecurity {
     # Check if LDAPS is configured
     $serverAuthOid = '1.3.6.1.5.5.7.3.1'
     $ldapsCert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object {
-        $_.Extensions -like "System.Security.Cryptography.Oid*" -and
-        $_.Extensions.Oid.Value -eq $serverAuthOid
+        $_.HasPrivateKey -and
+        $_.NotAfter -gt (Get-Date) -and
+        (
+            $_.Extensions |
+            Where-Object {
+                $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] -and
+                ($_.EnhancedKeyUsages | Where-Object { $_.Value -eq $serverAuthOid })
+            }
+        )
     }
 
     if ($ldapsCert) {
-        Write-both "    [+] LDAPS is configured on $computerName"
-    }
-    else {
-        Write-both "    [!] Issue identified LDAPS is not configured on $computerName, LDAPs certificates are not configured"
+        Write-Both "    [+] LDAPS is configured on $computerName"
+    } else {
+        Write-Both "    [!] Issue identified LDAPS is not configured on $computerName, LDAPs certificates are not configured"
         Add-Content -Path $outputdir\LDAPSecurity.txt -Value "LDAPS is not configured on $computerName, LDAPs certificates are not configured"
         Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAPS is not configured on $computerName, LDAPs certificates are not configured"
     }
@@ -1696,36 +1975,102 @@ function Get-LDAPSecurity {
     }
 
 
-    # Check for LDAP null sessions
-    $Server = (Get-ADDomainController -Discover).HostName
-    $Port = 389
+    # Check for LDAP null sessions (anonymous bind with effective read)
+    $Server = Get-ADDomainController -Discover | Select-Object -ExpandProperty HostName -First 1
+    $Port   = 389  # Use 636 + SSL if you want to test LDAPS
 
     try {
-        # Load required assemblies
         Add-Type -AssemblyName System.DirectoryServices.Protocols
 
-        # Create LDAP connection
-        $ldapConnection = New-Object System.DirectoryServices.Protocols.LdapConnection("$Server`:$Port")
+        # Create LDAP connection (explicit host/port)
+        $id   = New-Object System.DirectoryServices.Protocols.LdapDirectoryIdentifier($Server, $Port)
+        $conn = New-Object System.DirectoryServices.Protocols.LdapConnection($id)
 
-        # Set connection timeout
-        $ldapConnection.Timeout = [System.TimeSpan]::FromSeconds(5)
+        # Force a true anonymous bind (no fallback to current logon)
+        $conn.AuthType   = [System.DirectoryServices.Protocols.AuthType]::Anonymous
+        $conn.Credential = [System.Net.NetworkCredential]::new($null, $null)
+        $conn.Timeout    = [TimeSpan]::FromSeconds(5)
+        $conn.SessionOptions.ProtocolVersion = 3
+        $conn.SessionOptions.ReferralChasing = [System.DirectoryServices.Protocols.ReferralChasingOptions]::None
+        # For LDAPS testing, uncomment and set $Port=636:
+        # $conn.SessionOptions.SecureSocketLayer = $true
+        # (Lab-only) ignore cert trust:
+        # $conn.SessionOptions.VerifyServerCertificate = { param($c,$cert) $true }
 
-        # Create an empty NetworkCredential for anonymous bind
-        $anonymousCredential = New-Object System.Net.NetworkCredential("", "")
+        # Anonymous bind
+        $conn.Bind()
 
-        # Bind to the LDAP server anonymously
-        $ldapConnection.Bind($anonymousCredential)
+     # Discover default naming context from RootDSE (safe for discovery only)
+        $rootReq = New-Object System.DirectoryServices.Protocols.SearchRequest("", "(objectClass=*)", "Base", "defaultNamingContext")
+        $rootRes = $conn.SendRequest($rootReq)
 
-        Write-both "    [!] Issue identified LDAP null session allowed on server $Server`:$Port"
-        Add-Content -Path $outputdir\LDAPSecurity.txt -Value "null session allowed on server $Server`:$Port"
-        Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "LDAP null session allowed on server $Server`:$Port"
+        $defaultNC = $null
+        if ($rootRes -and $rootRes.Entries.Count -gt 0) {
+            $entry = $rootRes.Entries[0]
+            if ($entry.Attributes -and $entry.Attributes.Contains("defaultNamingContext")) {
+                $vals = $entry.Attributes["defaultNamingContext"].GetValues([string])
+                if ($vals -and $vals.Count -gt 0) { $defaultNC = $vals[0] }
+            }
+        }
+
+        if (-not $defaultNC) {
+         Write-Both "    [+] LDAP null session not useful on $Server`:$Port (no naming context visible)"
+         Add-Content -Path (Join-Path $outputdir 'LDAPSecurity.txt') -Value "Anonymous bind present but NC not visible on $Server`:$Port"
+         return
+        }
+
+        # Attempt a real directory read under default NC (no paging; limit to 1 entry)
+        $req = New-Object System.DirectoryServices.Protocols.SearchRequest(
+            $defaultNC,
+            "(objectClass=*)",
+            [System.DirectoryServices.Protocols.SearchScope]::Subtree,
+            @("distinguishedName")
+        )
+        $req.SizeLimit = 1
+        $req.TimeLimit = [TimeSpan]::FromSeconds(3)
+
+        $res = $conn.SendRequest($req)
+
+        if ($res.ResultCode -eq [System.DirectoryServices.Protocols.ResultCode]::Success -and
+            $res.Entries.Count -gt 0) {
+
+            Write-Both "    [!] LDAP anonymous (null) bind allows directory READ on $Server`:$Port"
+            Add-Content -Path (Join-Path $outputdir 'LDAPSecurity.txt') -Value "Anonymous bind allows directory read on $Server`:$Port"
+            Write-Nessus-Finding "Weak LDAP Settings" "KB1101" "Anonymous LDAP bind allows directory read on $Server`:$Port"
+
+        } else {
+            Write-Both ("    [+] LDAP null session not allowed/useful on {0}:{1} - Result: {2} ({3}) Msg: {4}" -f `
+             $Server, $Port, [int]$res.ResultCode, $res.ResultCode, $res.ErrorMessage)
+        }
+    }
+    catch [System.DirectoryServices.Protocols.DirectoryOperationException] {
+        # Typically indicates anonymous bind succeeded, but search was blocked (your DSID-0C090D44 case)
+        $resp = $_.Exception.Response
+        if ($resp) {
+         Write-Both ("    [+] LDAP null session not allowed/useful on {0}:{1} - Result: {2} ({3}) Msg: {4}" -f `
+                $Server, $Port, [int]$resp.ResultCode, $resp.ResultCode, $resp.ErrorMessage)
+            Add-Content -Path (Join-Path $outputdir 'LDAPSecurity.txt') -Value "Anonymous bind present but read blocked on $Server`:$Port"
+        } else {
+            Write-Both "    [+] LDAP null session not allowed/useful on $Server`:$Port (directory operation blocked)"
+        }
     }
     catch [System.DirectoryServices.Protocols.LdapException] {
-        Write-both "    [+] LDAP null session not allowed on server $Server`:$Port"
+        switch ($_.Exception.ErrorCode) {
+            49 {  # InvalidCredentials -> anonymous fully disabled
+                Write-Both "    [+] LDAP anonymous bind NOT allowed on $Server`:$Port (InvalidCredentials)"
+            }
+            8 {   # StrongerAuthRequired -> signing/TLS required; try LDAPS if you want to check further
+                Write-Both "    [+] LDAP anonymous bind refused on $Server`:$Port (StrongerAuthRequired - signing/LDAPS required)"
+            }
+            default {
+                Write-Both ("    [i] LDAP error on {0}:{1} - {2} (code {3})" -f $Server, $Port, $_.Exception.Message, $_.Exception.ErrorCode)
+            }
+        }
     }
-    catch {
-        Write-both "Error occurred: $_"
+    finally {
+        if ($conn) { $conn.Dispose() }
     }
+
 }
 
 function Find-DangerousACLPermissions {
@@ -1907,9 +2252,9 @@ Write-Nessus-Footer
 #Dirty fix for .nessus characters (will do this properly or as a function later. Will need more characters adding here...)
 $originalnessusoutput = Get-Content $outputdir\adaudit.nessus
 $nessusoutput = $originalnessusoutput -Replace "&", "&amp;"
-$nessusoutput = $nessusoutput -Replace "`“", "&quot;"
+$nessusoutput = $nessusoutput -Replace "`â€œ", "&quot;"
 $nessusoutput = $nessusoutput -Replace "`'", "&apos;"
-$nessusoutput = $nessusoutput -Replace "ü", "u"
+$nessusoutput = $nessusoutput -Replace "Ã¼", "u"
 $nessusoutput | Out-File $outputdir\adaudit-replaced.nessus
 
 $endtime = Get-Date
