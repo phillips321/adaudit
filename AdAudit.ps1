@@ -11,6 +11,36 @@
             * Tested on Windows Server 2008R2/2012/2012R2/2016/2019/2022
             * All languages (you may need to adjust $AdministratorTranslation variable)
         o Changelog :
+            [x] Version 6.8 - 13/02/2026
+                * Implemented proper XML special character escaping with dedicated Escape-XmlSpecialCharacters function
+                * Updated Write-Nessus-Finding to escape all parameters (pluginname, pluginid, pluginexample) at source
+                * Removed dirty post-processing code that created extra adaudit-replaced.nessus file
+                * Nessus XML output now valid and properly formatted without post-processing
+                * Handles all XML entities: &amp; &lt; &gt; &quot; &apos;
+            [x] Version 6.7 - 13/02/2026
+                * Added error handling to Get-GPOtoFile function for Get-GPOReport failures
+                * Separated HTML and XML GPO report generation with independent try-catch blocks
+                * Gracefully handles GPOReport ArgumentExceptions without blocking script execution
+                * Improved error messaging for GPO report generation failures
+            [x] Version 6.6 - 13/02/2026
+                * Fixed Get-Variables() group retrieval with granular error handling per group
+                * Schema Admins/Enterprise Admins now fail gracefully without blocking child domain groups
+                * Domain Admins, Domain Users, and Domain Controllers now retrieved independently
+                * Improved error messaging distinguishing forest root vs child domain scenarios
+            [x] Version 6.5 - 13/02/2026
+                * Fixed Schema Admins/Enterprise Admins lookup in child domains (they only exist in forest root)
+                * Added defensive checks for null group variables in Get-PrivilegedGroupMembership
+                * Added defensive checks for null group variables in Get-PrivilegedGroupAccounts
+                * Fixed SPNs.txt file check to prevent error when no high-value kerberoastable accounts found
+                * Improved error handling messages for child domain scenarios
+            [x] Version 6.4 - 13/02/2026
+                * Enhanced error handling throughout script with try-catch blocks
+                * Improved Get-Variables() function with granular error handling for AD queries
+                * Added error handling for module loading (ActiveDirectory, ServerManager, GroupPolicy)
+                * Enhanced Install-Dependencies function with detailed error messages
+                * Added error handling to Get-PasswordQuality and Get-ADCSVulns functions
+                * Improved output directory creation with error messaging
+                * Added validation check for script variable initialization
             [x] Version 6.3 - 07/11/2025
                 * Force true anonymous bind: set AuthType=Anonymous and Credential=[NetworkCredential]::new($null,$null)
                 * Use LdapDirectoryIdentifier($Server, $Port) instead of "$Server:$Port" string to avoid parsing quirks
@@ -26,12 +56,12 @@
                    - Added check to ensure certificate has a private key.
                 * Added explicit success message for DSRM on DCs:
                    Prints "[+] Windows LAPS DSRM configuration on Domain Controllers looks OK..."
-                   when DFL ≥ 2016 and all DCs have a DSRM secret backed up AND none are expired.
+                   when DFL â‰¥ 2016 and all DCs have a DSRM secret backed up AND none are expired.
                 * Introduced separate DC DSRM reports:
                    - winlaps_dcs_missing-dsrm.txt
                    - winlaps_dcs_expired-dsrm.txt
                   DC entries are also included in aggregate Windows LAPS files where appropriate.
-                * DSRM checks gated by DFL ≥ 2016 per Microsoft guidance.
+                * DSRM checks gated by DFL â‰¥ 2016 per Microsoft guidance.
                 * Fixed Windows LAPS rights export:
                    - Now binds -Identity explicitly for Find-LapsADExtendedRights.
                    - Prevents "Cannot bind argument to parameter 'Identity' ... empty array" errors.
@@ -199,34 +229,101 @@ Param (
 $selectedChecks = @()
 if ($select) { $selectedChecks = $select.Split(',') }
 
-$versionnum = "v6.0"
+$versionnum = "v6.8"
 $AdministratorTranslation = @("Administrator", "Administrateur", "Administrador")#If missing put the default Administrator name for your own language here
 
 Function Get-Variables() {
     #Retrieve group names and OS version
-    $script:OSVersion = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName).ProductName
-    $script:Administrators = (Get-ADGroup -Identity S-1-5-32-544).SamAccountName
-    $script:Users = (Get-ADGroup -Identity S-1-5-32-545).SamAccountName
-    $script:DomainAdminsSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value) + "-512"
-    $script:DomainUsersSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value) + "-513"
-    $script:DomainControllersSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value) + "-516"
-    $script:SchemaAdminsSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value) + "-518"
-    $script:EnterpriseAdminsSID = ((Get-ADDomain -Current LoggedOnUser).domainsid.value) + "-519"
-    $script:EveryOneSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
-    $script:EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
-    $script:AuthenticatedUsersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
-    $script:SystemSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-18"
-    $script:LocalServiceSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-19"
-    $script:DomainAdmins = (Get-ADGroup -Identity $DomainAdminsSID).SamAccountName
-    $script:DomainUsers = (Get-ADGroup -Identity $DomainUsersSID).SamAccountName
-    $script:DomainControllers = (Get-ADGroup -Identity $DomainControllersSID).SamAccountName
-    $script:SchemaAdmins = (Get-ADGroup -Identity $SchemaAdminsSID).SamAccountName
-    $script:EnterpriseAdmins = (Get-ADGroup -Identity $EnterpriseAdminsSID).SamAccountName
-    $script:EveryOne = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
-    $script:EntrepriseDomainControllers = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
-    $script:AuthenticatedUsers = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
-    $script:System = $SystemSID.Translate([System.Security.Principal.NTAccount]).Value
-    $script:LocalService = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
+    try {
+        $script:OSVersion = (Get-Itemproperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ProductName -ErrorAction Stop).ProductName
+    } catch {
+        Write-Both "    [!] Warning: Could not retrieve OS version from registry: $($_.Exception.Message)"
+        $script:OSVersion = "Unknown"
+    }
+
+    try {
+        $script:Administrators = (Get-ADGroup -Identity S-1-5-32-544 -ErrorAction Stop).SamAccountName
+    } catch {
+        Write-Both "    [!] Error: Failed to retrieve Administrators group: $($_.Exception.Message)"
+        return
+    }
+
+    try {
+        $script:Users = (Get-ADGroup -Identity S-1-5-32-545 -ErrorAction Stop).SamAccountName
+    } catch {
+        Write-Both "    [!] Error: Failed to retrieve Users group: $($_.Exception.Message)"
+        return
+    }
+
+    try {
+        $domainSID = (Get-ADDomain -Current LoggedOnUser -ErrorAction Stop).domainsid.value
+        $script:DomainAdminsSID = $domainSID + "-512"
+        $script:DomainUsersSID = $domainSID + "-513"
+        $script:DomainControllersSID = $domainSID + "-516"
+        $script:SchemaAdminsSID = $domainSID + "-518"
+        $script:EnterpriseAdminsSID = $domainSID + "-519"
+    } catch {
+        Write-Both "    [!] Error: Failed to retrieve domain information: $($_.Exception.Message)"
+        return
+    }
+
+    try {
+        $script:EveryOneSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-1-0"
+        $script:EntrepriseDomainControllersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-9"
+        $script:AuthenticatedUsersSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-11"
+        $script:SystemSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-18"
+        $script:LocalServiceSID = New-Object System.Security.Principal.SecurityIdentifier "S-1-5-19"
+    } catch {
+        Write-Both "    [!] Error: Failed to create SID objects: $($_.Exception.Message)"
+        return
+    }
+
+    try {
+        $script:DomainAdmins = (Get-ADGroup -Identity $DomainAdminsSID -ErrorAction Stop).SamAccountName
+    } catch {
+        Write-Both "    [!] Error: Failed to retrieve Domain Admins group: $($_.Exception.Message)"
+        return
+    }
+
+    try {
+        $script:DomainUsers = (Get-ADGroup -Identity $DomainUsersSID -ErrorAction Stop).SamAccountName
+    } catch {
+        Write-Both "    [!] Error: Failed to retrieve Domain Users group: $($_.Exception.Message)"
+        return
+    }
+
+    try {
+        $script:DomainControllers = (Get-ADGroup -Identity $DomainControllersSID -ErrorAction Stop).SamAccountName
+    } catch {
+        Write-Both "    [!] Error: Failed to retrieve Domain Controllers group: $($_.Exception.Message)"
+        return
+    }
+
+    # Schema Admins and Enterprise Admins only exist in forest root domain
+    try {
+        $script:SchemaAdmins = (Get-ADGroup -Identity $SchemaAdminsSID -ErrorAction Stop).SamAccountName
+    } catch {
+        Write-Both "    [i] Schema Admins not available in this domain (expected in child domains)"
+        $script:SchemaAdmins = $null
+    }
+
+    try {
+        $script:EnterpriseAdmins = (Get-ADGroup -Identity $EnterpriseAdminsSID -ErrorAction Stop).SamAccountName
+    } catch {
+        Write-Both "    [i] Enterprise Admins not available in this domain (expected in child domains)"
+        $script:EnterpriseAdmins = $null
+    }
+
+    try {
+        $script:EveryOne = $EveryOneSID.Translate([System.Security.Principal.NTAccount]).Value
+        $script:EntrepriseDomainControllers = $EntrepriseDomainControllersSID.Translate([System.Security.Principal.NTAccount]).Value
+        $script:AuthenticatedUsers = $AuthenticatedUsersSID.Translate([System.Security.Principal.NTAccount]).Value
+        $script:System = $SystemSID.Translate([System.Security.Principal.NTAccount]).Value
+        $script:LocalService = $LocalServiceSID.Translate([System.Security.Principal.NTAccount]).Value
+    } catch {
+        Write-Both "    [!] Error: Failed to translate SIDs to account names: $($_.Exception.Message)"
+        return
+    }
     Write-Both "    [+] Administrators               : $Administrators"
     Write-Both "    [+] Users                        : $Users"
     Write-Both "    [+] Domain Admins                : $DomainAdmins"
@@ -252,15 +349,33 @@ Function Write-Nessus-Header() {
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "<ReportHost name=`"$env:ComputerName`"><HostProperties></HostProperties>"
 }
 Function Write-Nessus-Finding( [string]$pluginname, [string]$pluginid, [string]$pluginexample) {
-    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<ReportItem port=`"0`" svc_name=`"`" protocol=`"`" severity=`"0`" pluginID=`"ADAudit_$pluginid`" pluginName=`"$pluginname`" pluginFamily=`"Windows`">"
-    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<description>There's an issue with $pluginname</description>"
+    # Properly escape XML special characters in all parameters
+    $escapedPluginName = Escape-XmlSpecialCharacters $pluginname
+    $escapedPluginId = Escape-XmlSpecialCharacters $pluginid
+    $escapedPluginExample = Escape-XmlSpecialCharacters $pluginexample
+
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<ReportItem port=`"0`" svc_name=`"`" protocol=`"`" severity=`"0`" pluginID=`"ADAudit_$escapedPluginId`" pluginName=`"$escapedPluginName`" pluginFamily=`"Windows`">"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<description>There's an issue with $escapedPluginName</description>"
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "<plugin_type>remote</plugin_type><risk_factor>Low</risk_factor>"
-    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<solution>CCS Recommends fixing the issues with $pluginname on the host</solution>"
-    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<synopsis>There's an issue with the $pluginname settings on the host</synopsis>"
-    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<plugin_output>$pluginexample</plugin_output></ReportItem>"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<solution>CCS Recommends fixing the issues with $escapedPluginName on the host</solution>"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<synopsis>There's an issue with the $escapedPluginName settings on the host</synopsis>"
+    Add-Content -Path "$outputdir\adaudit.nessus" -Value "<plugin_output>$escapedPluginExample</plugin_output></ReportItem>"
 }
 Function Write-Nessus-Footer() {
     Add-Content -Path "$outputdir\adaudit.nessus" -Value "</ReportHost></Report></AdAudit>"
+}
+Function Escape-XmlSpecialCharacters {
+    #Properly escapes XML special characters
+    param([string]$Value)
+    if ([string]::IsNullOrEmpty($Value)) { return $Value }
+
+    $Value = $Value -replace '&', '&amp;'   # Must be FIRST to avoid double-escaping!
+    $Value = $Value -replace '<', '&lt;'
+    $Value = $Value -replace '>', '&gt;'
+    $Value = $Value -replace '"', '&quot;'
+    $Value = $Value -replace "'", '&apos;'
+
+    return $Value
 }
 Function Get-DNSZoneInsecure {
     #Check DNS zones allowing insecure updates
@@ -597,7 +712,7 @@ function Get-LAPSStatus {
                 Write-Both "    [+] No non-system extended rights discovered for Windows LAPS password read on any OU."
             }
         } else {
-            Write-Both "    [!] LAPS module not found; skipping Windows LAPS extended rights export. (Import the built‑in 'LAPS' module on this host to enable.)"
+            Write-Both "    [!] LAPS module not found; skipping Windows LAPS extended rights export. (Import the builtâ€‘in 'LAPS' module on this host to enable.)"
         }
     }
 
@@ -606,9 +721,28 @@ function Get-LAPSStatus {
 Function Get-PrivilegedGroupAccounts {
     #Lists users in Admininstrators, DA and EA groups
     [array]$privilegedusers = @()
-    $privilegedusers += Get-ADGroupMember $Administrators   -Recursive
-    $privilegedusers += Get-ADGroupMember $DomainAdmins     -Recursive
-    $privilegedusers += Get-ADGroupMember $EnterpriseAdmins -Recursive
+
+    try {
+        $privilegedusers += Get-ADGroupMember $Administrators -Recursive -ErrorAction Stop
+    } catch {
+        Write-Both "    [!] Warning: Could not retrieve Administrators group members: $($_.Exception.Message)"
+    }
+
+    try {
+        $privilegedusers += Get-ADGroupMember $DomainAdmins -Recursive -ErrorAction Stop
+    } catch {
+        Write-Both "    [!] Warning: Could not retrieve Domain Admins members: $($_.Exception.Message)"
+    }
+
+    # Enterprise Admins only exists in forest root domain
+    if ($EnterpriseAdmins) {
+        try {
+            $privilegedusers += Get-ADGroupMember $EnterpriseAdmins -Recursive -ErrorAction Stop
+        } catch {
+            Write-Both "    [i] Enterprise Admins not available (child domain)"
+        }
+    }
+
     $privusersunique = $privilegedusers | Sort-Object -Unique
     $count = 0
     $totalcount = ($privilegedusers | Measure-Object | Select-Object Count).count
@@ -832,13 +966,22 @@ Function Get-UserPasswordNotChangedRecently {
 }
 Function Get-GPOtoFile {
     #Outputs complete GPO report
-    if (Test-Path "$outputdir\GPOReport.html") { Remove-Item "$outputdir\GPOReport.html" -Recurse }
-    Get-GPOReport -All -ReportType HTML -Path "$outputdir\GPOReport.html"
-    Write-Both "    [+] GPO Report saved to GPOReport.html"
-    if (Test-Path "$outputdir\GPOReport.xml") { Remove-Item "$outputdir\GPOReport.xml" -Recurse }
-    Get-GPOReport -All -ReportType XML -Path "$outputdir\GPOReport.xml"
-    Write-Both "    [+] GPO Report saved to GPOReport.xml, now run Grouper offline using the following command (KB499)"
-    Write-Both "    [+]     PS>Import-Module Grouper.psm1 ; Invoke-AuditGPOReport -Path C:\GPOReport.xml -Level 3"
+    try {
+        if (Test-Path "$outputdir\GPOReport.html") { Remove-Item "$outputdir\GPOReport.html" -Recurse -ErrorAction Stop }
+        Get-GPOReport -All -ReportType HTML -Path "$outputdir\GPOReport.html" -ErrorAction Stop
+        Write-Both "    [+] GPO Report saved to GPOReport.html"
+    } catch {
+        Write-Both "    [!] Warning: Error generating GPO HTML report: $($_.Exception.Message)"
+    }
+
+    try {
+        if (Test-Path "$outputdir\GPOReport.xml") { Remove-Item "$outputdir\GPOReport.xml" -Recurse -ErrorAction Stop }
+        Get-GPOReport -All -ReportType XML -Path "$outputdir\GPOReport.xml" -ErrorAction Stop
+        Write-Both "    [+] GPO Report saved to GPOReport.xml, now run Grouper offline using the following command (KB499)"
+        Write-Both "    [+]     PS>Import-Module Grouper.psm1 ; Invoke-AuditGPOReport -Path C:\GPOReport.xml -Level 3"
+    } catch {
+        Write-Both "    [!] Warning: Error generating GPO XML report: $($_.Exception.Message)"
+    }
 }
 Function Get-GPOsPerOU {
     #Lists all OUs and which GPOs apply to them
@@ -1262,23 +1405,46 @@ Function Get-GPOEnum {
 }
 Function Get-PrivilegedGroupMembership {
     #List Domain Admins, Enterprise Admins and Schema Admins members
-    $SchemaMembers = Get-ADGroup $SchemaAdmins     | Get-ADGroupMember
-    $EnterpriseMembers = Get-ADGroup $EnterpriseAdmins | Get-ADGroupMember
-    $DomainAdminsMembers = Get-ADGroup $DomainAdmins     | Get-ADGroupMember
-    if (($SchemaMembers | measure).count -ne 0) {
-        Write-Both "    [!] Schema Admins not empty!!!"
-        foreach ($member in $SchemaMembers) {
-            Add-Content -Path "$outputdir\schema_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
+    # Note: Schema Admins and Enterprise Admins only exist in forest root domain
+    if ($SchemaAdmins) {
+        try {
+            $SchemaMembers = Get-ADGroup $SchemaAdmins -ErrorAction Stop | Get-ADGroupMember -ErrorAction Stop
+            if (($SchemaMembers | measure).count -ne 0) {
+                Write-Both "    [!] Schema Admins not empty!!!"
+                foreach ($member in $SchemaMembers) {
+                    Add-Content -Path "$outputdir\schema_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
+                }
+            }
+        } catch {
+            Write-Both "    [i] Schema Admins not available in this domain (expected in child domains)"
         }
+    } else {
+        Write-Both "    [i] Schema Admins not available (child domain)"
     }
-    if (($EnterpriseMembers | measure).count -ne 0) {
-        Write-Both "    [!] Enterprise Admins not empty!!!"
-        foreach ($member in $EnterpriseMembers) {
-            Add-Content -Path "$outputdir\enterprise_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
+
+    if ($EnterpriseAdmins) {
+        try {
+            $EnterpriseMembers = Get-ADGroup $EnterpriseAdmins -ErrorAction Stop | Get-ADGroupMember -ErrorAction Stop
+            if (($EnterpriseMembers | measure).count -ne 0) {
+                Write-Both "    [!] Enterprise Admins not empty!!!"
+                foreach ($member in $EnterpriseMembers) {
+                    Add-Content -Path "$outputdir\enterprise_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
+                }
+            }
+        } catch {
+            Write-Both "    [i] Enterprise Admins not available in this domain (expected in child domains)"
         }
+    } else {
+        Write-Both "    [i] Enterprise Admins not available (child domain)"
     }
-    foreach ($member in $DomainAdminsMembers) {
-        Add-Content -Path "$outputdir\domain_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
+
+    try {
+        $DomainAdminsMembers = Get-ADGroup $DomainAdmins -ErrorAction Stop | Get-ADGroupMember -ErrorAction Stop
+        foreach ($member in $DomainAdminsMembers) {
+            Add-Content -Path "$outputdir\domain_admins.txt" -Value "$($member.objectClass) $($member.SamAccountName) $($member.Name)"
+        }
+    } catch {
+        Write-Both "    [!] Error retrieving Domain Admins members: $($_.Exception.Message)"
     }
 }
 Function Get-DCEval {
@@ -1627,20 +1793,46 @@ Function Get-RODC {
 Function Install-Dependencies {
     #Install DSInternals
     if ($PSVersionTable.PSVersion.Major -ge 5) {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor
-        [Net.SecurityProtocolType]::Tls12
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        } catch {
+            Write-Both "    [!] Warning: Could not set TLS 1.2 protocol: $($_.Exception.Message)"
+        }
+
         $count = 0
         $totalcount = 3
         Write-Progress -Activity "Installing dependencies..." -Status "Currently installing NuGet Package Provider" -PercentComplete ($count / $totalcount * 100)
-        if (!(Get-PackageProvider -ListAvailable -Name Nuget -ErrorAction SilentlyContinue)) { Install-PackageProvider -Name NuGet -Force | Out-Null }
+        try {
+            if (!(Get-PackageProvider -ListAvailable -Name Nuget -ErrorAction SilentlyContinue)) {
+                Install-PackageProvider -Name NuGet -Force -ErrorAction Stop | Out-Null
+            }
+        } catch {
+            Write-Both "    [!] Warning: Failed to install NuGet: $($_.Exception.Message)"
+        }
+
         $count++
         Write-Progress -Activity "Installing dependencies..." -Status "Currently adding PSGallery to trusted Repositories" -PercentComplete ($count / $totalcount * 100)
-        if ((Get-PSRepository -Name PSGallery).InstallationPolicy -eq "Untrusted") { Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted }
+        try {
+            if ((Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue).InstallationPolicy -eq "Untrusted") {
+                Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted -ErrorAction Stop
+            }
+        } catch {
+            Write-Both "    [!] Warning: Failed to set PSGallery as trusted: $($_.Exception.Message)"
+        }
+
         $count++
         Write-Progress -Activity "Installing dependencies..." -Status "Currently installing module DSInternals" -PercentComplete ($count / $totalcount * 100)
-        if (!(Get-Module -ListAvailable -Name DSInternals)) { Install-Module -Name DSInternals -Force }
+        try {
+            if (!(Get-Module -ListAvailable -Name DSInternals -ErrorAction SilentlyContinue)) {
+                Install-Module -Name DSInternals -Force -ErrorAction Stop
+            }
+            Import-Module DSInternals -ErrorAction Stop
+            Write-Both "    [+] DSInternals module installed successfully"
+        } catch {
+            Write-Both "    [!] Warning: Failed to install DSInternals module: $($_.Exception.Message)"
+        }
+
         Write-Progress -Activity "Installing dependencies..." -Status "Ready" -Completed
-        Import-Module DSInternals
     }
     else {
         Write-Both "    [!] PowerShell 5 or greater is needed, see https://www.microsoft.com/en-us/download/details.aspx?id=54616"
@@ -1654,17 +1846,21 @@ Function Remove-StringLatinCharacters {
 Function Get-PasswordQuality {
     #Use DSInternals to evaluate password quality
     if (Get-Module -ListAvailable -Name DSInternals) {
-        $totalSite = (Get-ADObject -Filter { objectClass -like "site" } -SearchBase (Get-ADRootDSE).ConfigurationNamingContext | measure).Count
-        $count = 0
-        Get-ADObject -Filter { objectClass -like "site" } -SearchBase (Get-ADRootDSE).ConfigurationNamingContext | ForEach-Object {
-            if ($_.Name -eq $(Remove-StringLatinCharacters $_.Name)) { $count++ }
-        }
-        if ($count -ne $totalSite) {
-            Write-Both "    [!] One or more site have illegal characters in their name, can't get password quality!"
-        }
-        else {
-            Get-ADReplAccount -All -Server $env:ComputerName -NamingContext $(Get-ADDomain | select -ExpandProperty DistinguishedName) | Test-PasswordQuality -IncludeDisabledAccounts | Out-File "$outputdir\password_quality.txt"
-            Write-Both "    [!] Password quality test done, see $outputdir\password_quality.txt"
+        try {
+            $totalSite = (Get-ADObject -Filter { objectClass -like "site" } -SearchBase (Get-ADRootDSE).ConfigurationNamingContext -ErrorAction Stop | measure).Count
+            $count = 0
+            Get-ADObject -Filter { objectClass -like "site" } -SearchBase (Get-ADRootDSE).ConfigurationNamingContext -ErrorAction Stop | ForEach-Object {
+                if ($_.Name -eq $(Remove-StringLatinCharacters $_.Name)) { $count++ }
+            }
+            if ($count -ne $totalSite) {
+                Write-Both "    [!] One or more site have illegal characters in their name, can't get password quality!"
+            }
+            else {
+                Get-ADReplAccount -All -Server $env:ComputerName -NamingContext $(Get-ADDomain | select -ExpandProperty DistinguishedName) -ErrorAction Stop | Test-PasswordQuality -IncludeDisabledAccounts | Out-File "$outputdir\password_quality.txt"
+                Write-Both "    [!] Password quality test done, see $outputdir\password_quality.txt"
+            }
+        } catch {
+            Write-Both "    [!] Error running password quality test: $($_.Exception.Message)"
         }
     }
 }
@@ -1688,9 +1884,17 @@ Function Check-Shares {
 }
 
 Function Get-ADCSVulns {
-    #Check for ADCS Vulnerabiltiies, ESC1,2,3,4 and 8. ESC8 will output to a different issues mapped to Nessus. 
-    $certutil_output = certutil -v -template
-    $certutil_lines = $certutil_output.Trim().Split("`n")
+    #Check for ADCS Vulnerabiltiies, ESC1,2,3,4 and 8. ESC8 will output to a different issues mapped to Nessus.
+    try {
+        $certutil_output = certutil -v -template -ErrorAction Stop
+    } catch {
+        Write-Both "    [!] Error: Unable to enumerate certificate templates: $($_.Exception.Message)"
+        Write-Both "    [!] Make sure you have the appropriate permissions and certutil is available"
+        return
+    }
+
+    try {
+        $certutil_lines = $certutil_output.Trim().Split("`n")
     $templates = @()
     foreach ($line in $certutil_lines) {
         if ($line.StartsWith("Template[")) {
@@ -1789,6 +1993,10 @@ Function Get-ADCSVulns {
         add-content -path $template_path -value $ESC4line
         Write-Both '    [!]'$ESC4line
     }
+    } catch {
+        Write-Both "    [!] Error parsing certificate templates: $($_.Exception.Message)"
+    }
+
     # ESC8 Check, If error 401 and response is unauthorized, then vulnerable
     try {
         $certInfo = & certutil
@@ -1891,7 +2099,13 @@ Function Get-SPNs {
         Write-both $kerbuser
         add-content -path $outputdir\SPNs.txt -value $user.Name
     }
-    Write-Nessus-Finding  "Kerberoast Attack - Services Configured With a Weak Password" "KB611" ([System.IO.File]::ReadAllText("$outputdir\SPNs.txt"))
+
+    # Only write Nessus finding if SPNs were actually found
+    if (Test-Path "$outputdir\SPNs.txt") {
+        Write-Nessus-Finding  "Kerberoast Attack - Services Configured With a Weak Password" "KB611" ([System.IO.File]::ReadAllText("$outputdir\SPNs.txt"))
+    } else {
+        Write-Both "    [+] No high-value kerberoastable accounts found"
+    }
 }
 
 function Get-ADUsersWithoutPreAuth {
@@ -2184,24 +2398,68 @@ function Find-DangerousACLPermissions {
 $outputdir = (Get-Item -Path ".\").FullName + "\" + $env:computername
 $starttime = Get-Date
 $scriptname = $MyInvocation.MyCommand.Name
-if (!(Test-Path "$outputdir")) { New-Item -ItemType Directory -Path $outputdir | Out-Null }
+try {
+    if (!(Test-Path "$outputdir")) { New-Item -ItemType Directory -Path $outputdir | Out-Null }
+} catch {
+    Write-Host "[!] Error: Cannot create output directory: $($_.Exception.Message)"
+    exit
+}
+
 Write-Both " _____ ____     _____       _ _ _
 |  _  |    \   |  _  |_ _ _| |_| |_
 |     |  |  |  |     | | | . | |  _|
 |__|__|____/   |__|__|___|___|_|_|
 $versionnum                  by phillips321
 "
+
 $running = $false
 Write-Both "[*] Script start time $starttime"
-if (Get-Module -ListAvailable -Name ActiveDirectory) { Import-Module ActiveDirectory }else { Write-Both "[!] ActiveDirectory module not installed, exiting..." ; exit }
-if (Get-Module -ListAvailable -Name ServerManager) { Import-Module ServerManager }else { Write-Both "[!] ServerManager module not installed, exiting..."   ; exit }
-if (Get-Module -ListAvailable -Name GroupPolicy) { Import-Module GroupPolicy }else { Write-Both "[!] GroupPolicy module not installed, exiting..."     ; exit }
-if (Get-Module -ListAvailable -Name DSInternals) { Import-Module DSInternals }else { Write-Both "[!] DSInternals module not installed, use -installdeps to force install" }
-if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\adaudit.nessus" | Out-Null }
+
+try {
+    if (Get-Module -ListAvailable -Name ActiveDirectory) { Import-Module ActiveDirectory -ErrorAction Stop }
+    else { Write-Both "[!] ActiveDirectory module not installed, exiting..." ; exit }
+} catch {
+    Write-Both "[!] Error loading ActiveDirectory module: $($_.Exception.Message)"
+    exit
+}
+
+try {
+    if (Get-Module -ListAvailable -Name ServerManager) { Import-Module ServerManager -ErrorAction Stop }
+    else { Write-Both "[!] ServerManager module not installed, exiting..." ; exit }
+} catch {
+    Write-Both "[!] Error loading ServerManager module: $($_.Exception.Message)"
+    exit
+}
+
+try {
+    if (Get-Module -ListAvailable -Name GroupPolicy) { Import-Module GroupPolicy -ErrorAction Stop }
+    else { Write-Both "[!] GroupPolicy module not installed, exiting..." ; exit }
+} catch {
+    Write-Both "[!] Error loading GroupPolicy module: $($_.Exception.Message)"
+    exit
+}
+
+if (Get-Module -ListAvailable -Name DSInternals) {
+    Import-Module DSInternals -ErrorAction SilentlyContinue
+} else {
+    Write-Both "[!] DSInternals module not installed, use -installdeps to force install"
+}
+
+try {
+    if (Test-Path "$outputdir\adaudit.nessus") { Remove-Item -recurse "$outputdir\adaudit.nessus" | Out-Null }
+} catch {
+    Write-Both "[!] Warning: Could not clean old nessus file: $($_.Exception.Message)"
+}
+
 Write-Nessus-Header
 Write-Host "[+] Outputting to $outputdir"
 Write-Both "[*] Lang specific variables"
 Get-Variables
+
+if (!$?) {
+    Write-Both "[!] Error: Failed to initialize script variables. Exiting..."
+    exit
+}
 if ($installdeps) { $running = $true ; Write-Both "[*] Installing optionnal features"                           ; Install-Dependencies }
 if ($hostdetails -or ($all -and 'hostdetails' -notin $exclude) -or 'hostdetails' -in $selectedChecks) { $running = $true ; Write-Both "[*] Device Information" ; Get-HostDetails }
 if ($domainaudit -or ($all -and 'domainaudit' -notin $exclude) -or 'domainaudit' -in $selectedChecks) { $running = $true ; Write-Both "[*] Domain Audit" ; Get-LastWUDate ; Get-DCEval ; Get-TimeSource ; Get-PrivilegedGroupMembership ; Get-MachineAccountQuota; Get-DefaultDomainControllersPolicy ; Get-SMB1Support ; Get-FunctionalLevel ; Get-DCsNotOwnedByDA ; Get-ReplicationType ; Check-Shares ; Get-RecycleBinState ; Get-CriticalServicesStatus ; Get-RODC }
@@ -2248,14 +2506,6 @@ if (!$running) {
     Write-Both "    -select allows you to exclude specific checks when using -all, e.g. $scriptname -all `"-gpo,ntds,acl`""
 }
 Write-Nessus-Footer
-
-#Dirty fix for .nessus characters (will do this properly or as a function later. Will need more characters adding here...)
-$originalnessusoutput = Get-Content $outputdir\adaudit.nessus
-$nessusoutput = $originalnessusoutput -Replace "&", "&amp;"
-$nessusoutput = $nessusoutput -Replace "`â€œ", "&quot;"
-$nessusoutput = $nessusoutput -Replace "`'", "&apos;"
-$nessusoutput = $nessusoutput -Replace "Ã¼", "u"
-$nessusoutput | Out-File $outputdir\adaudit-replaced.nessus
 
 $endtime = Get-Date
 Write-Both "[*] Script end time $endtime"
