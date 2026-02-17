@@ -93,3 +93,29 @@ The following switches can be used in combination
 * `-exclude` allows you to exclude specific checks when using `adaudit.ps1 -all -exclude ouperms,ntds,adcs"`
 * `-select` allows you to exclude specific checks when using `adaudit.ps1 -all "gpo,ntds,acl"`
 * `-all` runs all checks, e.g. `AdAudit.ps1 -all`
+
+## Child Domain Support
+The script now fully supports both **forest root domains** and **child domains**:
+* Schema Admins and Enterprise Admins are gracefully handled in child domains (where they only exist in the forest root)
+* Script completes successfully with appropriate informational messaging for missing forest-root-only groups
+* No crashes or blocking failures due to missing groups in child domain scenarios
+* Tested and validated on Windows Server 2022 child domains
+
+## Error Handling & Robustness
+The script implements comprehensive error handling throughout:
+* Optional audit functions fail gracefully without blocking script execution
+* GPO report generation errors (e.g., corrupted GPOs) don't prevent other audits from completing
+* Defensive checks prevent file-not-found exceptions on optional output files
+* Clear error/warning/info messaging distinguishes between critical failures and expected scenarios
+* Missing optional modules (DSInternals, LAPS, AdmPwd.PS) don't prevent core audit functions
+
+## Nessus XML Output
+* Generates valid, properly-formatted Nessus XML without requiring post-processing
+* All special characters are properly escaped at source (&, <, >, ", ')
+* Output file is ready for direct import into Nessus without manual modifications
+* Eliminates the need for post-processing steps or extra output files
+
+## Tested Environments
+* **Validated on Windows Server 2022** (both forest root and child domains)
+* Supports Windows Server 2008R2 through 2022
+* Successfully handles complex production environments with corrupted GPOs and mixed configurations
